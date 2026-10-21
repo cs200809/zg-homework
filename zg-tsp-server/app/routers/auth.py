@@ -8,16 +8,17 @@ import string
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
 
-from app.db.repo import repo
-from app.models.entities import (
+from app.db.repo import Repo
+from app.db.session import get_db
+from app.models.constants import (
     INVITE_UNUSED,
-    ROLE_ADMIN,
     ROLE_STUDENT,
     ROLE_TEACHER,
     STATUS_ACTIVE,
-    User,
 )
+from app.models.entities import User
 from app.schemas.auth import (
     ChangePasswordRequest,
     LoginRequest,
@@ -69,8 +70,10 @@ def _gen_bind_code() -> str:
 
 
 @router.post("/register")
-async def register(req: RegisterRequest):
+async def register(req: RegisterRequest, db: Session = Depends(get_db)):
     """注册。学生/家长/老师；老师必须携带有效邀请码（PRD 5.1）。"""
+    repo = Repo(db)
+
     if repo.get_user_by_username(req.username):
         raise _bad_request("用户名已存在")
 
@@ -89,15 +92,15 @@ async def register(req: RegisterRequest):
         else:
             raise _bad_request(f"邀请码不可用（状态：{invite.status}）")
 
-    user = User(
-        id=0,
-        username=req.username,
-        password_hash=hash_password(req.password),
-        role=req.role,
-        nickname=req.nickname or req.username,
-        bind_code=_gen_bind_code() if req.role == ROLE_STUDENT else None,
+    created = repo.add_user(
+        User(
+            username=req.username,
+            password_hash=hash_password(req.password),
+            role=req.role,
+            nickname=req.nickname or req.username,
+            bind_code=_gen_bind_code() if req.role == ROLE_STUDENT else None,
+        )
     )
-    created = repo.add_user(user)
 
     # 一码一用：标记邀请码已使用
     if req.role == ROLE_TEACHER:
@@ -105,13 +108,16 @@ async def register(req: RegisterRequest):
         invite.used_by_user_id = created.id
         invite.used_at = datetime.now()
 
+    db.commit()
+    db.refresh(created)
+
     return ok({"user": _to_user_info(created).model_dump()})
 
 
 @router.post("/login")
-async def login(req: LoginRequest):
+async def login(req: LoginRequest, db: Session = Depends(get_db)):
     """登录。返回 JWT 与用户信息。"""
-    user = repo.get_user_by_username(req.username.strip())
+    user = Repo(db).get_user_by_username(req.username.strip())
     if not user or not verify_password(req.password, user.password_hash):
         raise _bad_request("用户名或密码错误")
 
@@ -137,6 +143,7 @@ async def me(user: User = Depends(get_current_user)):
 @router.post("/change-password")
 async def change_password(
     req: ChangePasswordRequest,
+    db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
     """修改密码。admin 首登后必须调用此接口改密。"""
@@ -148,6 +155,7 @@ async def change_password(
 
     user.password_hash = hash_password(req.new_password)
     user.must_change_password = False
+    db.commit()
 
     return ok({"message": "密码修改成功"})
 

@@ -2,10 +2,7 @@
 
 from pydantic import BaseModel, Field, field_validator
 
-from app.models.entities import ROLE_PARENT, ROLE_STUDENT, ROLE_TEACHER
-
-# admin 不开放注册（PRD 5.1）
-REGISTERABLE_ROLES = (ROLE_STUDENT, ROLE_PARENT, ROLE_TEACHER)
+from app.models.constants import REGISTERABLE_ROLES
 
 
 class RegisterRequest(BaseModel):

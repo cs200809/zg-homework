@@ -43,31 +43,41 @@ docker run -d -p 8000:8000 --env-file .env zg-tsp-server:1.0.0
 
 ```
 app/
-├── main.py          应用入口（lifespan 种子 + 统一异常处理）
+├── main.py          应用入口（lifespan 建表 + 统一异常处理）
 ├── config.py        配置（读 .env）
-├── db/repo.py       仓储层（当前内存 Mock，后续换 SQLAlchemy）
-├── models/          数据实体
+├── db/session.py    引擎与会话（MySQL + 连接池）
+├── db/repo.py       仓储层（SQLAlchemy 实现）
+├── models/
+│   ├── constants.py    枚举常量（角色、状态等）
+│   └── entities.py     SQLAlchemy 模型（14 张表）
 ├── schemas/         Pydantic 出入参
 ├── routers/         路由：auth/classes/homework/checkin/points/
 │                    articles/games/parent/admin
 ├── services/        point_rule_service / point_service / anti_cheat
 ├── utils/           security(jwt/bcrypt) / deps(权限依赖) / response
-├── seed/            admin + point_rules + 联调账号初始化
-├── data/            SQLite 数据文件（git 忽略）
+├── seed/            建表与种子脚本（python -m app.seed.initial_data）
 └── uploads/         上传文件（git 忽略内容）
 
 tests/               pytest 测试
 ```
 
-## 当前状态：Mock 数据（P1）
+## 数据库：MySQL
 
-P1 阶段**尚未建表**，数据存于进程内存（`app/db/repo.py`）：
+数据落在 MySQL `zg_tsp`，字符集 **utf8mb4**（正确存储中文与 emoji）。
 
-- **进程重启数据丢失**，仅供接口联调
-- `routers` / `services` 只通过 `repo` 访问数据，不直接碰列表
-- 接入 SQLAlchemy 时**只需替换 `app/db/repo.py`**，调用方签名不变
+```bash
+# 1. 建表 + 种子（幂等，可重复执行）
+python -m app.seed.initial_data
 
-### 启动时自动创建
+# 2. 清库重建（危险，仅开发用）
+python -m app.seed.initial_data --reset
+```
+
+> 连接配置在 `.env` 的 `DATABASE_URL`。
+> **种子不随服务启动自动执行** —— lifespan 只做 `create_all` 建表（幂等），
+> 避免生产环境意外写入默认账号。
+
+### 种子写入的基础数据
 
 | 类型          | 内容                                             |
 |-------------|------------------------------------------------|
@@ -85,16 +95,31 @@ P1 阶段**尚未建表**，数据存于进程内存（`app/db/repo.py`）：
 | `student02` | student | `test123456` |
 | `parent01`  | parent  | `test123456` |
 
-> admin 密码随机生成，启动日志中会打印一次。
+> 首次执行时 admin 密码随机生成，**仅打印一次**；
+> 也可先在 `.env` 设 `ADMIN_INIT_PASSWORD` 固定密码。
+>
+> 当前 `admin` 的随机密码已打印过一次（`WR2k_lUsudpm8XY3`），
+> 建议改密或用 `--reset` 重建。
 
 ## 测试
 
 ```bash
-pytest                    # 27 个用例
+pytest                    # 42 个用例
 ```
 
-覆盖：登录/注册、四角色权限、老师邀请码一码一用（含过期/撤销）、
-禁用后 JWT 立即失效、admin 强制改密、参数校验、统一响应格式。
+覆盖：登录/注册、四角色登录、老师邀请码一码一用（含过期/撤销/已用）、
+禁用后 JWT 立即失效、JWT 载荷与 7 天有效期、admin 强制改密、
+角色权限依赖、bcrypt 落库、跨会话持久化、中文 utf8mb4、统一响应格式。
+
+> **测试库约定：只增不删**
+>
+> 测试直接跑在开发库 `zg_tsp` 上（不另建测试库）。为保证用例互不干扰：
+
+> - 每个用例用**随机后缀的唯一用户名**（如 `t_a1b2c3_stu01`），天然不冲突
+> - 只做 INSERT / UPDATE，**从不 TRUNCATE、从不 DELETE**
+> - 代价是测试数据会残留在库中（当前 users 表约 170+ 条测试记录）
+>
+> 需要干净起点时手动执行 `python -m app.seed.initial_data --reset`。
 
 ## 接口契约
 
@@ -107,8 +132,8 @@ pytest                    # 27 个用例
 ## 开发进度
 
 - [x] P0 骨架：配置、health 检查、Dockerfile、目录结构
-- [x] P1 JWT 认证 + 注册登录（**Mock 数据层**，27 测试通过）
-- [ ] P1b 接入 SQLAlchemy 真实建表（替换 `app/db/repo.py`）
+- [x] P1 JWT 认证 + 注册登录
+- [x] P1b 接入 MySQL：14 张表 + 种子数据，42 测试通过
 - [ ] P1.5 admin 基础
 - [ ] P1.6 积分规则管理
 - [ ] P2 班级与作业

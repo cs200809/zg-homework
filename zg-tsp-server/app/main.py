@@ -30,10 +30,15 @@ logging.basicConfig(
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """启动种子（PRD 10.4）。"""
-    from app.seed.initial_data import seed_all
+    """启动时确保表存在。
 
-    seed_all()
+    种子数据由 `python -m app.seed.initial_data` 显式执行（PRD 10.4），
+    不在启动时自动跑，避免生产环境意外写入默认账号。
+    """
+    from app.db.session import engine
+    from app.models.entities import Base
+
+    Base.metadata.create_all(bind=engine)
     yield
 
 

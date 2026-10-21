@@ -20,7 +20,12 @@ class Settings(BaseSettings):
     debug: bool = False
 
     # --- 数据库 ---
-    database_url: str = f"sqlite:///{BASE_DIR / 'app' / 'data' / 'zg_tsp.db'}"
+    # MySQL（字符集 utf8mb4 以正确存储中文与 emoji）
+    database_url: str = (
+        "mysql+pymysql://root:12345678@127.0.0.1:3306/zg_tsp"
+        "?charset=utf8mb4"
+    )
+    db_echo: bool = False
 
     # --- JWT ---
     jwt_secret: str = "change-me-in-production"
