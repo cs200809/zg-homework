@@ -44,7 +44,8 @@
 
 ### 2.2 项目结构
 
-按端/形态拆分为四个独立模块（各自可独立构建、独立发布版本）：
+按端/形态拆分为四个**相互独立**的模块。每个模块可单独启动、单独打包、单独发版，
+任一模块的构建/发布**不影响**其他模块——彼此唯一的耦合是服务端接口契约。
 
 - zg-tsp-server 服务端模块
 - zg-tsp-web web 管理端模块
@@ -66,7 +67,9 @@ project/
 │   │   ├── utils/                    # jwt, deps(权限依赖)
 │   │   ├── seed/                     # admin + point_rules 初始化
 │   │   └── uploads/
-│   └── requirements.txt
+│   ├── requirements.txt
+│   ├── .env.example                  # 配置样例（不含真实密钥）
+│   └── Dockerfile
 │
 ├── zg-tsp-web/                       # Web 管理端（React 18 + Vite）
 │   ├── src/
@@ -78,21 +81,73 @@ project/
 │   │   ├── components/
 │   │   ├── store/
 │   │   └── router/
-│   └── package.json
+│   ├── .env.example                  # VITE_API_BASE_URL
+│   ├── package.json                  # 依赖独立，不引用其他模块
+│   └── Dockerfile + nginx.conf
 │
 ├── zg-tsp-ios/                       # iOS 移动端（学生 / 家长）
-│   └── ...                           # Swift / SwiftUI 或 Flutter
+│   ├── .gitignore
+│   └── ...                           # Xcode 工程 / SwiftUI 或 Flutter
 │
 ├── zg-tsp-android/                   # Android 移动端（学生 / 家长）
-│   └── ...                           # Kotlin 或 Flutter
+│   ├── .gitignore
+│   └── ...                           # Gradle 工程 / Kotlin 或 Flutter
 │
 └── sys_doc/
     └── PRD.md
 ```
 
+#### 2.2.1 模块独立性原则
+
+| 原则         | 说明                                                                    |
+|------------|-----------------------------------------------------------------------|
+| 无源码依赖    | 任何模块不得 import / 引用其他模块源码；模块间**只通过 HTTP 接口**通信              |
+| 依赖自封闭    | 每个模块自带依赖清单（`requirements.txt` / `package.json` / Gradle），不使用根目录统一依赖 |
+| 配置外置     | 服务端配置走 `.env`；Web 走 `VITE_*` 构建变量；移动端走各自配置项。**不硬编码**任何模块地址 |
+| 单独启动     | 每个模块有独立的启动命令与健康检查，可脱离其他模块单独跑起来（接口调用失败时降级提示，不崩溃） |
+| 单独打包     | 每个模块独立构建产物、独立版本号、独立发布，互不触发重建                       |
+| 版本契约     | 服务端接口遵循向后兼容；客户端不因服务端小版本升级而必须同步发版                    |
+
+#### 2.2.2 各模块独立启动与打包
+
+**zg-tsp-server**
+
+```bash
+cd zg-tsp-server
+pip install -r requirements.txt
+cp .env.example .env            # 按需修改
+uvicorn app.main:app --host 0.0.0.0 --port 8000
+# 打包：docker build -t zg-tsp-server:1.0.0 .
+```
+
+健康检查：`POST /health` → `{code:0, data:{status:"ok"}}`
+
+**zg-tsp-web**
+
+```bash
+cd zg-tsp-web
+npm install
+npm run dev                     # 开发，API 地址取 .env 的 VITE_API_BASE_URL
+npm run build                   # 产出 dist/，纯静态文件
+# 打包：docker build -t zg-tsp-web:1.0.0 .   （Nginx 托管 dist/）
+```
+
+部署时只需将 `dist/` 丢到任意静态服务器 / 对象存储；API 地址在构建期注入。
+
+**zg-tsp-ios / zg-tsp-android**
+
+```bash
+cd zg-tsp-ios      && xcodebuild ...     # 或 flutter build ipa
+cd zg-tsp-android && ./gradlew assembleRelease   # 或 flutter build apk
+```
+
+产出 `.ipa` / `.aab` / `.apk`。**API 基地址**为构建期配置项（xcconfig / BuildConfig），
+分别打「测试环境」与「生产环境」两个渠道，不硬编码在业务代码里。
+
 > - 学生端 / 家长端以移动端为主，移动优先布局；老师端 / admin 端以 Web 桌面端为主。
-> - 移动端具体技术栈待定，需在开工前确认（见文末「待确认事项」）。
-> - 四模块共用服务端 `/api` 接口契约，接口清单见第 7 节。
+> - 移动端具体技术栈待定，需在开工前确认（见第 13 节「待确认事项」）。
+> - 服务端接口清单见第 7 节，是四模块间唯一的契约来源。
+> - **跨模块集成测试**：四模块各自可单测；跨端联调在 P9 统一进行，不作为模块独立性的约束。
 
 ---
 
@@ -780,7 +835,7 @@ POST /admin/stats/overview
 
 | Phase | 模块              | 内容                                           |
 |-------|-----------------|----------------------------------------------|
-| P0    | 四模块骨架          | 建立 zg-tsp-server / web / ios / android 目录与工程初始化         |
+| P0    | 四模块骨架          | 建立四模块目录与工程初始化；各模块依赖清单、配置外置（`.env.example`）、独立启动脚本、Dockerfile；确保无跨模块源码依赖 |
 | P1    | zg-tsp-server    | 建表、种子（admin+规则）、JWT 认证、注册登录（老师邀请码校验）        |
 | P1.5  | zg-tsp-server    | admin 基础：邀请码管理、用户管理（全角色禁用/启用）、全局统计         |
 | P1.6  | zg-tsp-server    | 积分规则管理：规则服务+缓存、admin CRUD、各积分点接入             |
@@ -819,6 +874,15 @@ POST /admin/stats/overview
 - [ ] 学生/家长端移动端可用
 - [ ] 全接口均为 POST，URL 不携带业务参数
 
+**模块独立性**
+
+- [ ] 四个模块均可单独检出、单独安装依赖、单独启动，互不依赖其他模块的构建产物
+- [ ] 任一模块重新构建/发版，不触发也不破坏其他模块
+- [ ] 任一模块的源码中不含对其他模块的 import / 路径引用 / 构建期依赖
+- [ ] 服务端不可用时，Web 与移动端能正常启动并给出降级提示，不崩溃
+- [ ] 服务端地址均为外部配置项，代码中无硬编码地址
+- [ ] 各模块可独立版本化发布；服务端小版本升级不强制客户端同步发版
+
 ---
 
 ## 13. 待确认事项
@@ -828,10 +892,12 @@ POST /admin/stats/overview
 1. **移动端技术栈**
    - 选项 A：Flutter（iOS + Android 同一代码库，两端一致）
    - 选项 B：原生双端（iOS SwiftUI + Android Kotlin，各自维护）
-   - 影响：P8 工作量与人力；选 A 可大幅压缩开发周期。
+   - 影响：P8 工作量与人力；选 A 可大幅压缩开发周期。两者都能满足「单独启动、单独打包」。
 2. **移动端是否需要老师/admin 功能** — 当前 PRD 划分老师/admin 只做 Web。若移动端也要，需补充页面清单。
 3. **多班级支持** — 当前「一个学生只属一个班级」。是否需要学生跨班/多班？
 4. **成语接龙题库 200+ 来源** — 内置 JSON / 数据库表 / 后台导入？
 5. **数独题库来源** — 内置生成算法 / 预置题库？
-6. **部署形态** — 是否需要 Docker Compose 一键部署？
+6. **仓库形态** — 四模块同仓库（monorepo，当前方案）还是拆成四个独立仓库？monorepo 下若某模块需单独对外发布，可配置 subtree split。
+7. **环境渠道** — 移动端打几个渠道（仅生产 / 测试+生产）？Web 是否需要多环境构建？
+8. **服务端健康检查与监控** — 是否需要 `/health` 之外的就绪探针、Prometheus 指标？
 
