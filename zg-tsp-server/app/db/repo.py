@@ -1,61 +1,41 @@
-"""内存仓储层（Mock）。
+"""仓储层 —— SQLAlchemy 实现。
 
-routers / services 只通过本模块的方法访问数据，不直接触碰列表。
-后续接入 SQLAlchemy 时替换本文件实现即可，调用方签名不变。
-
-注意：进程内内存，服务重启后数据丢失。适用于 P1 接口联调阶段。
+方法签名与 P1 的内存版保持一致，因此 routers / services 无需改动。
+所有方法均只读或返回 ORM 对象；写操作由调用方控制事务。
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime
 
-from app.models.entities import (
-    INVITE_UNUSED,
-    STATUS_ACTIVE,
-    PointRule,
-    TeacherInviteCode,
-    User,
-)
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session
+
+from app.models.entities import PointRule, TeacherInviteCode, User
 
 
-class MemoryRepo:
-    """内存仓储。"""
+class Repo:
+    """仓储。持有会话，由 FastAPI 依赖注入。"""
 
-    def __init__(self) -> None:
-        self.users: list[User] = []
-        self.invite_codes: list[TeacherInviteCode] = []
-        self.point_rules: list[PointRule] = []
-        self._next_user_id = 1
-        self._next_invite_id = 1
-        self._next_rule_id = 1
-
-    def reset(self) -> None:
-        """清空全部数据（测试用）。"""
-        self.users.clear()
-        self.invite_codes.clear()
-        self.point_rules.clear()
-        self._next_user_id = 1
-        self._next_invite_id = 1
-        self._next_rule_id = 1
+    def __init__(self, db: Session) -> None:
+        self.db = db
 
     # ---------------- users ----------------
 
     def add_user(self, user: User) -> User:
-        user.id = self._next_user_id
-        self._next_user_id += 1
-        self.users.append(user)
+        self.db.add(user)
+        self.db.flush()  # 回填自增主键
         return user
 
     def get_user_by_id(self, user_id: int) -> User | None:
-        return next((u for u in self.users if u.id == user_id), None)
+        return self.db.get(User, user_id)
 
     def get_user_by_username(self, username: str) -> User | None:
-        return next((u for u in self.users if u.username == username), None)
+        return self.db.scalar(select(User).where(User.username == username))
 
     def list_users(self) -> list[User]:
-        return list(self.users)
+        return list(self.db.scalars(select(User).order_by(User.id)))
 
     def count_users(self) -> int:
-        return len(self.users)
+        return self.db.scalar(select(func.count()).select_from(User)) or 0
 
     # ---------------- 老师邀请码 ----------------
 
@@ -66,35 +46,34 @@ class MemoryRepo:
         expire_at: datetime | None = None,
     ) -> TeacherInviteCode:
         invite = TeacherInviteCode(
-            id=self._next_invite_id,
             code=code,
             created_by=created_by,
             expire_at=expire_at,
         )
-        self._next_invite_id += 1
-        self.invite_codes.append(invite)
+        self.db.add(invite)
+        self.db.flush()
         return invite
 
     def get_invite_by_code(self, code: str) -> TeacherInviteCode | None:
-        return next((i for i in self.invite_codes if i.code == code), None)
+        return self.db.scalar(select(TeacherInviteCode).where(TeacherInviteCode.code == code))
 
     def list_invite_codes(self) -> list[TeacherInviteCode]:
-        return list(self.invite_codes)
+        return list(self.db.scalars(select(TeacherInviteCode).order_by(TeacherInviteCode.id)))
 
     # ---------------- 积分规则 ----------------
 
     def add_point_rule(self, rule: PointRule) -> PointRule:
-        rule.id = self._next_rule_id
-        self._next_rule_id += 1
-        self.point_rules.append(rule)
+        self.db.add(rule)
+        self.db.flush()
         return rule
 
     def get_rule_by_key(self, rule_key: str) -> PointRule | None:
-        return next((r for r in self.point_rules if r.rule_key == rule_key), None)
+        return self.db.scalar(select(PointRule).where(PointRule.rule_key == rule_key))
 
     def list_point_rules(self) -> list[PointRule]:
-        return list(self.point_rules)
+        return list(self.db.scalars(select(PointRule).order_by(PointRule.id)))
 
 
-# 全局单例
-repo = MemoryRepo()
+def get_repo(db: Session) -> Repo:
+    """FastAPI 依赖：构造仓储。"""
+    return Repo(db)
