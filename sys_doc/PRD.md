@@ -36,41 +36,63 @@
 ### 2.1 技术栈
 
 - **前端**：React 18 + Vite + Ant Design 5 + React Router 6 + Axios + Zustand
-- **后端**：Python 3.11 + FastAPI + SQLAlchemy 2.0 + Pydantic v2 + Uvicorn
+- **后端**：Python 3.12 + FastAPI + SQLAlchemy 2.0 + Pydantic v2 + Uvicorn
 - **数据库**：SQLite（MVP，可平滑迁移 MySQL）
 - **认证**：JWT（python-jose），密码 bcrypt 加密
 - **文件存储**：本地 `uploads/`（预留 OSS 接口）
 - **部署**：前后端分离，Nginx 反代（可选）
 
 ### 2.2 项目结构
+
+按端/形态拆分为四个独立模块（各自可独立构建、独立发布版本）：
+
 - zg-tsp-server 服务端模块
-- zg-tsp-web web管理端模块
-- zg-tsp-ios ISO移动端模块
-- zg-tsp-android Android移动端模块
+- zg-tsp-web web 管理端模块
+- zg-tsp-ios iOS 移动端模块
+- zg-tsp-android Android 移动端模块
+
 ```
 project/
-├── backend/
+├── zg-tsp-server/                    # 服务端（FastAPI）
 │   ├── app/
 │   │   ├── main.py
 │   │   ├── config.py
 │   │   ├── database.py
 │   │   ├── models/
 │   │   ├── schemas/
-│   │   ├── routers/         # auth, class, homework, checkin, points,
-│   │   │                    # article, game, parent, admin
-│   │   ├── services/        # point_rule_service, point_service, anti_cheat
-│   │   ├── utils/           # jwt, deps(权限依赖)
+│   │   ├── routers/                  # auth, classes, homework, checkin,
+│   │   │                             # points, articles, games, parent, admin
+│   │   ├── services/                 # point_rule_service, point_service, anti_cheat
+│   │   ├── utils/                    # jwt, deps(权限依赖)
+│   │   ├── seed/                     # admin + point_rules 初始化
 │   │   └── uploads/
 │   └── requirements.txt
-└── frontend/
-    ├── src/
-    │   ├── api/
-    │   ├── pages/           # admin / teacher / student / parent
-    │   ├── components/
-    │   ├── store/
-    │   └── router/
-    └── package.json
+│
+├── zg-tsp-web/                       # Web 管理端（React 18 + Vite）
+│   ├── src/
+│   │   ├── api/
+│   │   ├── pages/
+│   │   │   ├── admin/                # 邀请码/用户/规则/文章/班级/概览
+│   │   │   ├── teacher/              # 班级/作业/文章/积分概览
+│   │   │   └── common/               # 登录/注册/强制改密
+│   │   ├── components/
+│   │   ├── store/
+│   │   └── router/
+│   └── package.json
+│
+├── zg-tsp-ios/                       # iOS 移动端（学生 / 家长）
+│   └── ...                           # Swift / SwiftUI 或 Flutter
+│
+├── zg-tsp-android/                   # Android 移动端（学生 / 家长）
+│   └── ...                           # Kotlin 或 Flutter
+│
+└── sys_doc/
+    └── PRD.md
 ```
+
+> - 学生端 / 家长端以移动端为主，移动优先布局；老师端 / admin 端以 Web 桌面端为主。
+> - 移动端具体技术栈待定，需在开工前确认（见文末「待确认事项」）。
+> - 四模块共用服务端 `/api` 接口契约，接口清单见第 7 节。
 
 ---
 
@@ -670,14 +692,18 @@ POST /admin/stats/overview
 
 ## 9. 前端页面清单
 
+按模块归属划分：
+
+### 9.1 zg-tsp-ios / zg-tsp-android（移动端，学生 + 家长）
+
 **公共**
 
-- 登录页 / 注册页（选角色；选"老师"显示邀请码输入）
-- admin 首次登录强制改密页
+- 登录页 / 注册页（选角色 student/parent）
 - 学生首次：加入班级页
 - 家长首次：绑定学生页
+- 我的（个人资料、改密）
 
-**学生端（移动优先）**
+**学生端**
 
 - 首页：签到、今日积分、今日作业、排行榜入口
 - 作业列表/详情（开始、上传）
@@ -686,18 +712,25 @@ POST /admin/stats/overview
 - 排行榜（日榜/总榜）
 - 我的积分明细
 
+**家长端**
+
+- 孩子列表/绑定
+- 孩子积分与明细
+- 积分消耗
+
+### 9.2 zg-tsp-web（Web 管理端，老师 + admin）
+
+**公共**
+
+- 登录页 / 注册页（选角色 teacher；显示邀请码输入）
+- admin 首次登录强制改密页
+
 **老师端（桌面）**
 
 - 班级管理/创建
 - 作业列表/布置/完成情况表格
 - 文章管理/发布/阅读记录
 - 班级积分概览
-
-**家长端（移动）**
-
-- 孩子列表/绑定
-- 孩子积分与明细
-- 积分消耗
 
 **admin 端（桌面）**
 
@@ -745,17 +778,22 @@ POST /admin/stats/overview
 
 ## 11. 开发计划
 
-| Phase | 内容                                           |
-|-------|----------------------------------------------|
-| P1    | 项目结构、建表、种子（admin+规则）、JWT 认证、注册登录（老师邀请码校验）    |
-| P1.5  | admin 基础：邀请码管理、用户管理（全角色禁用/启用）、全局统计           |
-| P1.6  | 积分规则管理：规则服务+缓存、admin CRUD、各积分点接入             |
-| P2    | 班级、作业布置、开始/提交打点                              |
-| P3    | 签到、PointLog、日榜/总榜、积分明细（读规则表）                 |
-| P4    | 家长绑定与扣分                                      |
-| P5    | 阅读：文章发布（teacher/admin）、计时防挂机、阅读积分、admin 文章管理 |
-| P6    | 游戏：数独、成语接龙、游戏积分与上限                           |
-| P7    | 联调、权限校验、防刷、移动端适配、验收                          |
+| Phase | 模块              | 内容                                           |
+|-------|-----------------|----------------------------------------------|
+| P0    | 四模块骨架          | 建立 zg-tsp-server / web / ios / android 目录与工程初始化         |
+| P1    | zg-tsp-server    | 建表、种子（admin+规则）、JWT 认证、注册登录（老师邀请码校验）        |
+| P1.5  | zg-tsp-server    | admin 基础：邀请码管理、用户管理（全角色禁用/启用）、全局统计         |
+| P1.6  | zg-tsp-server    | 积分规则管理：规则服务+缓存、admin CRUD、各积分点接入             |
+| P2    | zg-tsp-server    | 班级、作业布置、开始/提交打点                              |
+| P3    | zg-tsp-server    | 签到、PointLog、日榜/总榜、积分明细（读规则表）                 |
+| P4    | zg-tsp-server    | 家长绑定与扣分                                      |
+| P5    | zg-tsp-server    | 阅读：文章发布（teacher/admin）、计时防挂机、阅读积分、admin 文章管理 |
+| P6    | zg-tsp-server    | 游戏：数独、成语接龙、游戏积分与上限                           |
+| P7    | zg-tsp-web       | 老师端 + admin 端页面（P1.5 起可并行开工）                    |
+| P8    | ios / android    | 学生端 + 家长端页面（P3 起可并行开工）                        |
+| P9    | 全模块            | 联调、权限校验、防刷、适配、验收                          |
+
+> 服务端 P1~P6 为关键路径，Web / 移动端在对应接口就绪后并行推进。
 
 **LLM 开发指令**：先输出「项目结构 + 建表 SQL + 种子 + 认证模块」并确认，再按 Phase 逐模块生成，每阶段可运行测试。
 
@@ -780,4 +818,20 @@ POST /admin/stats/overview
 - [ ] 敏感操作（禁用、规则修改、文章删除）有审计日志
 - [ ] 学生/家长端移动端可用
 - [ ] 全接口均为 POST，URL 不携带业务参数
+
+---
+
+## 13. 待确认事项
+
+开工前需拍板，否则影响 P0/P8：
+
+1. **移动端技术栈**
+   - 选项 A：Flutter（iOS + Android 同一代码库，两端一致）
+   - 选项 B：原生双端（iOS SwiftUI + Android Kotlin，各自维护）
+   - 影响：P8 工作量与人力；选 A 可大幅压缩开发周期。
+2. **移动端是否需要老师/admin 功能** — 当前 PRD 划分老师/admin 只做 Web。若移动端也要，需补充页面清单。
+3. **多班级支持** — 当前「一个学生只属一个班级」。是否需要学生跨班/多班？
+4. **成语接龙题库 200+ 来源** — 内置 JSON / 数据库表 / 后台导入？
+5. **数独题库来源** — 内置生成算法 / 预置题库？
+6. **部署形态** — 是否需要 Docker Compose 一键部署？
 
