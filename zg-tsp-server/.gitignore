@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# 配置（含真实密钥，禁止提交）
+.env
+.env.local
+.env.*.local
+
+# 数据与上传文件
+app/data/
+app/uploads/*
+!app/uploads/.gitkeep
+
+# 测试与缓存
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+
+# 编辑器
+.idea/
+.vscode/
+.DS_Store

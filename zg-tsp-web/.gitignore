@@ -1,0 +1,14 @@
+node_modules/
+dist/
+dist-ssr/
+
+# 本地覆盖（含敏感信息，禁止提交）
+.env.local
+.env.*.local
+
+# 编辑器与系统
+.idea/
+.vscode/
+.DS_Store
+*.log
+npm-debug.log*

@@ -1,0 +1,35 @@
+# ===== zg-tsp-android Flutter 工程忽略规则 =====
+# 本模块可独立检出、构建、发布，不依赖仓库内其他模块
+
+# --- Flutter / Dart ---
+.dart_tool/
+.packages
+.pub-cache/
+.pub/
+build/
+.flutter-plugins
+.flutter-plugins-dependencies
+pubspec.lock          # 应用工程通常不提交 lock
+
+# --- 构建产物 ---
+*.apk
+*.aab
+*.aar
+
+# --- Android 原生 ---
+android/.gradle/
+android/local.properties        # 含本机 SDK 路径
+android/app/debug/
+android/app/profile/
+android/app/release/
+android/key.properties           # 签名配置，严禁提交
+**/*.jks
+**/*.keystore
+
+# --- 配置覆盖（环境地址从命令行传入，不入库）---
+
+# --- IDE / 系统 ---
+.idea/
+.vscode/
+.DS_Store
+*.log

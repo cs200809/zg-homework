@@ -1,0 +1,30 @@
+# ===== zg-tsp-server 依赖清单 =====
+# 本模块依赖自封闭：不使用根目录统一依赖，可独立安装/打包
+# 安装：pip install -r requirements.txt
+
+# --- Web 框架 ---
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+python-multipart==0.0.20
+
+# --- ORM / 数据库 ---
+SQLAlchemy==2.0.36
+# MVP 用 SQLite；迁移 MySQL 时改为：
+# PyMySQL==1.1.1
+# cryptography==44.0.0
+
+# --- 校验 ---
+pydantic==2.10.4
+
+# --- 认证 / 安全 ---
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+bcrypt==4.2.1
+python-multipart==0.0.20
+
+# --- 配置 ---
+pydantic-settings==2.7.0
+
+# --- 工具 ---
+# 缓存 / 限流：MVP 用内存，规模化换 redis
+# redis==5.2.1
