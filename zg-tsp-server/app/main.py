@@ -4,13 +4,40 @@
     uvicorn app.main:app --host 0.0.0.0 --port 8000
 """
 
-from fastapi import FastAPI
+import logging
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.config import settings
-from app.utils.response import ok
+from app.routers import auth
+from app.utils.response import (
+    CODE_BAD_REQUEST,
+    CODE_SERVER_ERROR,
+    fail,
+    ok,
+)
 
-app = FastAPI(title=settings.app_name, debug=settings.debug)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """启动种子（PRD 10.4）。"""
+    from app.seed.initial_data import seed_all
+
+    seed_all()
+    yield
+
+
+app = FastAPI(title=settings.app_name, debug=settings.debug, lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -21,14 +48,46 @@ app.add_middleware(
 )
 
 
+# --- 统一异常响应（PRD 3.1）---
+
+
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request: Request, exc: StarletteHTTPException):
+    """HTTPException 的 detail 已按 {code, message} 结构构造。"""
+    detail = exc.detail
+    if isinstance(detail, dict) and "code" in detail:
+        return JSONResponse(status_code=exc.status_code, content=fail(detail["code"], detail["message"]))
+    return JSONResponse(status_code=exc.status_code, content=fail(exc.status_code, str(detail)))
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    """参数校验失败 → 400，附带首条错误信息。"""
+    first = exc.errors()[0] if exc.errors() else {}
+    field = ".".join(str(p) for p in first.get("loc", []) if p != "body")
+    msg = first.get("msg", "参数错误")
+    message = f"{field}: {msg}" if field else msg
+    return JSONResponse(status_code=400, content=fail(CODE_BAD_REQUEST, message))
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    logging.getLogger(__name__).exception("未处理异常")
+    return JSONResponse(status_code=500, content=fail(CODE_SERVER_ERROR, "服务端错误"))
+
+
+# --- 路由 ---
+
+
 @app.post("/health")
 async def health():
     """健康检查：供 Docker HEALTHCHECK 与客户端可用性探测使用。"""
     return ok({"status": "ok", "env": settings.env})
 
 
-# 各业务路由在对应 Phase 挂载：
-# app.include_router(auth.router, prefix="/auth", tags=["认证"])
+app.include_router(auth.router)
+
+# 其余业务路由在对应 Phase 挂载：
 # app.include_router(classes.router, prefix="/classes", tags=["班级"])
 # app.include_router(homework.router, prefix="/homework", tags=["作业"])
 # app.include_router(checkin.router, prefix="/checkin", tags=["签到"])

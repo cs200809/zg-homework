@@ -26,3 +26,6 @@ htmlcov/
 .idea/
 .vscode/
 .DS_Store
+
+# 测试（pytest.ini 已跟踪，仅忽略缓存）
+.pytest_cache/
