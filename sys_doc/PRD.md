@@ -85,28 +85,31 @@ project/
 │   ├── package.json                  # 依赖独立，不引用其他模块
 │   └── Dockerfile + nginx.conf
 │
-├── zg-tsp-ios/                       # iOS 移动端（学生 / 家长）
+├── zg-tsp-ios/                       # iOS 移动端（Flutter，四角色）
 │   ├── .gitignore
-│   └── ...                           # Xcode 工程 / SwiftUI 或 Flutter
+│   └── ...                           # Flutter 工程，产出 .ipa
 │
-├── zg-tsp-android/                   # Android 移动端（学生 / 家长）
+├── zg-tsp-android/                   # Android 移动端（Flutter，四角色）
 │   ├── .gitignore
-│   └── ...                           # Gradle 工程 / Kotlin 或 Flutter
+│   └── ...                           # Flutter 工程，产出 .apk / .aab
 │
 └── sys_doc/
     └── PRD.md
 ```
 
+> **决策 6**：四个模块最终拆分为**独立仓库**发布，本目录为聚合与文档同步用；
+> 接口契约以第 7 节为唯一权威来源。
+
 #### 2.2.1 模块独立性原则
 
-| 原则         | 说明                                                                    |
-|------------|-----------------------------------------------------------------------|
-| 无源码依赖    | 任何模块不得 import / 引用其他模块源码；模块间**只通过 HTTP 接口**通信              |
-| 依赖自封闭    | 每个模块自带依赖清单（`requirements.txt` / `package.json` / Gradle），不使用根目录统一依赖 |
-| 配置外置     | 服务端配置走 `.env`；Web 走 `VITE_*` 构建变量；移动端走各自配置项。**不硬编码**任何模块地址 |
-| 单独启动     | 每个模块有独立的启动命令与健康检查，可脱离其他模块单独跑起来（接口调用失败时降级提示，不崩溃） |
-| 单独打包     | 每个模块独立构建产物、独立版本号、独立发布，互不触发重建                       |
-| 版本契约     | 服务端接口遵循向后兼容；客户端不因服务端小版本升级而必须同步发版                    |
+| 原则    | 说明                                                                  |
+|-------|---------------------------------------------------------------------|
+| 无源码依赖 | 任何模块不得 import / 引用其他模块源码；模块间**只通过 HTTP 接口**通信                       |
+| 依赖自封闭 | 每个模块自带依赖清单（`requirements.txt` / `package.json` / Gradle），不使用根目录统一依赖 |
+| 配置外置  | 服务端配置走 `.env`；Web 走 `VITE_*` 构建变量；移动端走各自配置项。**不硬编码**任何模块地址          |
+| 单独启动  | 每个模块有独立的启动命令与健康检查，可脱离其他模块单独跑起来（接口调用失败时降级提示，不崩溃）                     |
+| 单独打包  | 每个模块独立构建产物、独立版本号、独立发布，互不触发重建                                        |
+| 版本契约  | 服务端接口遵循向后兼容；客户端不因服务端小版本升级而必须同步发版                                    |
 
 #### 2.2.2 各模块独立启动与打包
 
@@ -134,18 +137,24 @@ npm run build                   # 产出 dist/，纯静态文件
 
 部署时只需将 `dist/` 丢到任意静态服务器 / 对象存储；API 地址在构建期注入。
 
-**zg-tsp-ios / zg-tsp-android**
+**zg-tsp-ios / zg-tsp-android**（技术栈：Flutter，决策 1）
 
 ```bash
-cd zg-tsp-ios      && xcodebuild ...     # 或 flutter build ipa
-cd zg-tsp-android && ./gradlew assembleRelease   # 或 flutter build apk
+cd zg-tsp-ios
+flutter build ipa --flavor dev    --dart-define=API_BASE_URL=https://test.example.com
+flutter build ipa --flavor prod   --dart-define=API_BASE_URL=https://api.example.com
+
+cd zg-tsp-android
+flutter build apk --flavor dev    --dart-define=API_BASE_URL=https://test.example.com
+flutter build appbundle --flavor prod --dart-define=API_BASE_URL=https://api.example.com
 ```
 
-产出 `.ipa` / `.aab` / `.apk`。**API 基地址**为构建期配置项（xcconfig / BuildConfig），
-分别打「测试环境」与「生产环境」两个渠道，不硬编码在业务代码里。
+产出 `.ipa` / `.aab` / `.apk`。**API 基地址**通过 `--dart-define` 在构建期注入，
+配合 Flutter flavor（`dev` / `prod`）区分测试与生产渠道（决策 7），不硬编码在业务代码里。
+两模块代码库同源，但**各自独立构建、独立签名、独立发版**。
 
-> - 学生端 / 家长端以移动端为主，移动优先布局；老师端 / admin 端以 Web 桌面端为主。
-> - 移动端具体技术栈待定，需在开工前确认（见第 13 节「待确认事项」）。
+> - 学生端 / 家长端以移动端为主，移动优先布局；老师端 / admin 端以 Web 桌面端为主（移动端另有精简版，见 9.1）。
+> - 移动端技术栈为 **Flutter**，四角色全覆盖（决策 1、2）。
 > - 服务端接口清单见第 7 节，是四模块间唯一的契约来源。
 > - **跨模块集成测试**：四模块各自可单测；跨端联调在 P9 统一进行，不作为模块独立性的约束。
 
@@ -358,10 +367,23 @@ CREATE TABLE admin_logs
     detail      TEXT,
     created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
 );
+
+-- 成语接龙题库（决策 4：admin 后台导入，不内置）
+CREATE TABLE idiom_questions
+(
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    prompt      VARCHAR(50) NOT NULL, -- 题干（上一个成语的末字/题目文本）
+    answer      VARCHAR(50) NOT NULL, -- 正确答案
+    distractors TEXT,                 -- JSON 数组，干扰项
+    difficulty  VARCHAR(10) DEFAULT 'normal',
+    enabled     BOOLEAN     DEFAULT 1,
+    created_by  INTEGER,
+    created_at  DATETIME    DEFAULT CURRENT_TIMESTAMP
+);
 ```
 
 **索引**：`point_logs(student_id, log_date)`、`homework_records(student_id)`、`users(class_id)`、
-`teacher_invite_codes(code/status)`、`point_rules(rule_key)`
+`teacher_invite_codes(code/status)`、`point_rules(rule_key)`、`idiom_questions(enabled)`
 
 ### 4.2 积分规则种子数据
 
@@ -511,13 +533,21 @@ POST /articles/delete    {article_id}                     teacher（仅自己）
 ### 5.6 课后小游戏
 
 **数独**：难度分级，计时，完成提交按难度给分（规则表）
-**成语接龙**：60 秒限时闯关，答对 +1/题，题库内置 200+
+
+- 题库由**服务端内置生成算法**按难度实时生成，无需预置题库
+
+**成语接龙**：60 秒限时闯关，答对 +1/题
+
+- 题库由 **admin 后台导入**至 `idiom_questions` 表（决策 4），不内置于代码
+- 导入接口见 5.8.6
+
 **防沉迷**：每日游戏总积分上限 20（规则表 daily_limit）
 
 ```
 POST /games/sudoku/start   {difficulty}                  student
 POST /games/sudoku/result  {puzzle_id, duration, success} student
 POST /games/idiom/start    {}                            student
+POST /games/idiom/question {}                            student
 POST /games/idiom/answer   {session_id, answer}          student
 POST /games/idiom/result   {session_id}                  student
 POST /games/records        {page, size}                  student
@@ -609,6 +639,23 @@ POST /admin/articles/stats   {article_id}
 ```
 POST /admin/classes/list    {page, size}
 POST /admin/stats/overview  {} → {user_count, class_count, homework_count, point_total, ...}
+```
+
+#### 5.8.6 成语题库管理（决策 4）
+
+- 批量导入题目（支持 JSON 文件或逐条提交，单次上限 1000 条）
+- 导入校验：`prompt`/`answer` 非空；同批内 `prompt` 去重；已存在则跳过或覆盖（由参数 `mode` 决定：`skip`/`overwrite`）
+- 干扰项 `distractors` 为 JSON 数组，建议 ≥2 个；不足时服务端随机补齐
+- 列表支持关键词、启用状态筛选、分页
+- 单条编辑 / 删除 / 批量删除；写 `admin_logs`
+- 题目 `enabled=false` 后学生端不再抽到
+
+```
+POST /admin/idioms/import     {items: [{prompt, answer, distractors?, difficulty?}], mode?} → {success_count, skipped_count}
+POST /admin/idioms/list       {keyword?, enabled?, page, size}
+POST /admin/idioms/update     {question_id, prompt, answer, distractors, difficulty, enabled}
+POST /admin/idioms/delete     {question_id}
+POST /admin/idioms/batch-delete {question_ids: []}
 ```
 
 ---
@@ -709,6 +756,11 @@ POST /admin/rules/list
 POST /admin/rules/detail
 POST /admin/rules/update
 POST /admin/rules/batch-update
+POST /admin/idioms/import
+POST /admin/idioms/list
+POST /admin/idioms/update
+POST /admin/idioms/delete
+POST /admin/idioms/batch-delete
 POST /admin/articles/list
 POST /admin/articles/detail
 POST /admin/articles/update
@@ -717,6 +769,9 @@ POST /admin/articles/delete
 POST /admin/articles/stats
 POST /admin/classes/list
 POST /admin/stats/overview
+
+# 健康检查
+POST /health
 ```
 
 ---
@@ -747,52 +802,74 @@ POST /admin/stats/overview
 
 ## 9. 前端页面清单
 
-按模块归属划分：
+**四角色 × 两平台全覆盖**（决策 2 修订）：学生 / 家长 / 老师 / admin
+在**移动端（zg-tsp-ios、zg-tsp-android）与 Web 端（zg-tsp-web）均提供**。
 
-### 9.1 zg-tsp-ios / zg-tsp-android（移动端，学生 + 家长）
+差异仅在**交互形态**，不在**功能覆盖**：
 
-**公共**
+| 维度         | 移动端                          | Web 端                       |
+|------------|------------------------------|----------------------------|
+| 布局          | 移动优先，单列/卡片                     | 桌面优先，表格/抽屉/多列               |
+| 复杂表格        | 简表 + 详情页                        | 完整表格、排序、筛选、批量编辑           |
+| 富文本编辑      | 简化编辑器                           | 完整富文本编辑器                  |
+| 文件上传        | 拍照 / 相册 / 文件选择                 | 拖拽上传 + 文件选择            |
+| 批量操作       | 逐条操作                             | 多选批量（如成语题库批量导入）             |
 
-- 登录页 / 注册页（选角色 student/parent）
-- 学生首次：加入班级页
-- 家长首次：绑定学生页
+> 任何功能不得仅存在于单一平台；若某功能在某平台形态受限，
+> 需提供等效入口（如移动端「批量删除成语题目」→ 逐条删除）。
+
+### 9.1 公共页面（移动端 + Web 端均提供）
+
+- 登录页 / 注册页（选角色 student / parent / teacher；选 teacher 显示邀请码输入）
+- admin 首次登录强制改密页
 - 我的（个人资料、改密）
 
-**学生端**
+### 9.2 学生端（移动端 + Web 端均提供）
 
 - 首页：签到、今日积分、今日作业、排行榜入口
-- 作业列表/详情（开始、上传）
-- 阅读列表/详情（计时）
-- 游戏中心/数独/成语接龙
-- 排行榜（日榜/总榜）
+- 作业列表 / 详情（开始写作业、上传提交）
+- 阅读列表 / 详情（计时、心跳、读完标记）
+- 游戏中心 / 数独 / 成语接龙
+- 排行榜（日榜 / 总榜）
 - 我的积分明细
+- 首次使用：加入班级页
 
-**家长端**
+### 9.3 家长端（移动端 + Web 端均提供）
 
-- 孩子列表/绑定
+- 孩子列表 / 绑定
 - 孩子积分与明细
-- 积分消耗
+- 积分消耗（预设事项 + 自定义）
 
-### 9.2 zg-tsp-web（Web 管理端，老师 + admin）
+### 9.4 老师端（移动端 + Web 端均提供）
 
-**公共**
-
-- 登录页 / 注册页（选角色 teacher；显示邀请码输入）
-- admin 首次登录强制改密页
-
-**老师端（桌面）**
-
-- 班级管理/创建
-- 作业列表/布置/完成情况表格
-- 文章管理/发布/阅读记录
+- 我的班级 / 班级学生列表
+- 布置作业
+- 作业完成情况（学生、状态、开始时间、提交时间、用时、积分）
+- 文章管理 / 发布 / 阅读记录
 - 班级积分概览
 
-**admin 端（桌面）**
+### 9.5 admin 端（移动端 + Web 端均提供）
 
-- 邀请码管理（生成/列表/复制/撤销）
-- 用户管理（全角色筛选、禁用/启用、重置密码，admin 行按钮置灰）
-- 积分规则管理（表格+行内编辑弹窗+JSON 编辑器+启用开关）
-- 文章管理（全量列表、编辑抽屉、上下架、删除、阅读统计）
+- 邀请码管理（生成 / 列表 / 复制 / 撤销）
+- 用户管理（全角色筛选、禁用 / 启用、重置密码；admin 行按钮置灰）
+- 积分规则管理（积分值、日上限、扩展配置 JSON、启用开关）
+- 文章管理（全量列表、编辑、上下架、删除、阅读统计）
+- 成语题库管理（批量导入 JSON / 文件、列表、编辑、启用开关、删除）
+- 班级总览
+- 数据概览（统计卡片）
+
+### 9.6 平台实现分工
+
+| 功能点           | zg-tsp-ios      | zg-tsp-android  | zg-tsp-web |
+|----------------|---------------|---------------|-----------|
+| 四角色登录 / 注册   | ✅             | ✅             | ✅         |
+| 学生端全部功能     | ✅             | ✅             | ✅         |
+| 家长端全部功能     | ✅             | ✅             | ✅         |
+| 老师端全部功能     | ✅（移动形态）      | ✅（移动形态）      | ✅（桌面形态）   |
+| admin 端全部功能   | ✅（移动形态）      | ✅（移动形态）      | ✅（桌面形态）   |
+| 成语题库批量导入    | 逐条导入           | 逐条导入          | 批量导入      |
+
+> iOS 与 Android 为**同源独立仓库**（决策 6），功能范围一致，各自独立构建与发版。
 - 班级总览
 - 数据概览（统计卡片）
 
@@ -833,22 +910,23 @@ POST /admin/stats/overview
 
 ## 11. 开发计划
 
-| Phase | 模块              | 内容                                           |
-|-------|-----------------|----------------------------------------------|
-| P0    | 四模块骨架          | 建立四模块目录与工程初始化；各模块依赖清单、配置外置（`.env.example`）、独立启动脚本、Dockerfile；确保无跨模块源码依赖 |
-| P1    | zg-tsp-server    | 建表、种子（admin+规则）、JWT 认证、注册登录（老师邀请码校验）        |
-| P1.5  | zg-tsp-server    | admin 基础：邀请码管理、用户管理（全角色禁用/启用）、全局统计         |
-| P1.6  | zg-tsp-server    | 积分规则管理：规则服务+缓存、admin CRUD、各积分点接入             |
-| P2    | zg-tsp-server    | 班级、作业布置、开始/提交打点                              |
-| P3    | zg-tsp-server    | 签到、PointLog、日榜/总榜、积分明细（读规则表）                 |
-| P4    | zg-tsp-server    | 家长绑定与扣分                                      |
-| P5    | zg-tsp-server    | 阅读：文章发布（teacher/admin）、计时防挂机、阅读积分、admin 文章管理 |
-| P6    | zg-tsp-server    | 游戏：数独、成语接龙、游戏积分与上限                           |
-| P7    | zg-tsp-web       | 老师端 + admin 端页面（P1.5 起可并行开工）                    |
-| P8    | ios / android    | 学生端 + 家长端页面（P3 起可并行开工）                        |
-| P9    | 全模块            | 联调、权限校验、防刷、适配、验收                          |
+| Phase | 模块            | 内容                                                                      |
+|-------|---------------|-------------------------------------------------------------------------|
+| P0    | 四模块骨架         | 建立四模块目录与工程初始化；各模块依赖清单、配置外置（`.env.example`）、独立启动脚本、Dockerfile；确保无跨模块源码依赖 |
+| P1    | zg-tsp-server | 建表、种子（admin+规则）、JWT 认证、注册登录（老师邀请码校验）                                    |
+| P1.5  | zg-tsp-server | admin 基础：邀请码管理、用户管理（全角色禁用/启用）、全局统计                                      |
+| P1.6  | zg-tsp-server | 积分规则管理：规则服务+缓存、admin CRUD、各积分点接入                                        |
+| P2    | zg-tsp-server | 班级、作业布置、开始/提交打点                                                         |
+| P3    | zg-tsp-server | 签到、PointLog、日榜/总榜、积分明细（读规则表）                                            |
+| P4    | zg-tsp-server | 家长绑定与扣分                                                                 |
+| P5    | zg-tsp-server | 阅读：文章发布（teacher/admin）、计时防挂机、阅读积分、admin 文章管理                            |
+| P6    | zg-tsp-server | 游戏：数独、成语接龙、游戏积分与上限                                                      |
+| P7    | zg-tsp-web    | **四角色**页面：学生 / 家长 / 老师 / admin（P1.5 起可并行开工）                            |
+| P8    | ios / android | **四角色**页面：学生 / 家长 / 老师 / admin（P3 起可并行开工）                              |
+| P9    | 全模块           | 联调、权限校验、防刷、适配、验收                                                        |
 
 > 服务端 P1~P6 为关键路径，Web / 移动端在对应接口就绪后并行推进。
+> 移动端与 Web 端均为**四角色全覆盖**（第 9 节），差异仅在交互形态，无功能缺口。
 
 **LLM 开发指令**：先输出「项目结构 + 建表 SQL + 种子 + 认证模块」并确认，再按 Phase 逐模块生成，每阶段可运行测试。
 
@@ -882,22 +960,40 @@ POST /admin/stats/overview
 - [ ] 服务端不可用时，Web 与移动端能正常启动并给出降级提示，不崩溃
 - [ ] 服务端地址均为外部配置项，代码中无硬编码地址
 - [ ] 各模块可独立版本化发布；服务端小版本升级不强制客户端同步发版
+- [ ] 移动端测试/生产渠道可分别打包，API 基地址由构建期参数注入
+- [ ] 移动端四角色均可完成核心操作（老师布置作业、admin 管理用户/邀请码）
+- [ ] **四角色 × 两平台功能对齐**：任一功能在移动端或 Web 端均不存在功能缺口
+- [ ] 移动端批量操作有逐条等效入口（成语题库导入/删除等）
+- [ ] admin 可导入成语题库（≥200 条），导入去重与校验生效；禁用题目学生端抽不到
+- [ ] 服务端 `/health` 可用，未引入多余的监控依赖
 
 ---
 
-## 13. 待确认事项
+## 13. 已确认的技术决策
 
-开工前需拍板，否则影响 P0/P8：
+以下事项已拍板，作为后续开发的既定前提：
 
-1. **移动端技术栈**
-   - 选项 A：Flutter（iOS + Android 同一代码库，两端一致）
-   - 选项 B：原生双端（iOS SwiftUI + Android Kotlin，各自维护）
-   - 影响：P8 工作量与人力；选 A 可大幅压缩开发周期。两者都能满足「单独启动、单独打包」。
-2. **移动端是否需要老师/admin 功能** — 当前 PRD 划分老师/admin 只做 Web。若移动端也要，需补充页面清单。
-3. **多班级支持** — 当前「一个学生只属一个班级」。是否需要学生跨班/多班？
-4. **成语接龙题库 200+ 来源** — 内置 JSON / 数据库表 / 后台导入？
-5. **数独题库来源** — 内置生成算法 / 预置题库？
-6. **仓库形态** — 四模块同仓库（monorepo，当前方案）还是拆成四个独立仓库？monorepo 下若某模块需单独对外发布，可配置 subtree split。
-7. **环境渠道** — 移动端打几个渠道（仅生产 / 测试+生产）？Web 是否需要多环境构建？
-8. **服务端健康检查与监控** — 是否需要 `/health` 之外的就绪探针、Prometheus 指标？
+| # | 事项       | 决策                                   | 影响                                         |
+|---|----------|--------------------------------------|--------------------------------------------|
+| 1 | 移动端技术栈   | **Flutter**（iOS + Android 同一代码库）     | `flutter build ipa` / `apk` 各自独立打包，满足模块独立性 |
+| 2 | 角色 × 平台覆盖  | **四角色 × 两平台全覆盖**：学生/家长/老师/admin 在移动端与 Web 端均提供 | 三个客户端模块均为四角色全量功能，差异仅在交互形态，见第 9 节   |
+| 3 | 多班级支持    | **不支持**，一个学生只属一个班级                   | `users.class_id` 单值，无需关联表                  |
+| 4 | 成语接龙题库来源 | **后台导入**                             | 需新增 `idiom_questions` 表 + admin 导入接口 + 导入页 |
+| 5 | 数独题库来源   | **内置生成算法**                           | 服务端按难度算法生成，无需预置题库                          |
+| 6 | 仓库形态     | **四个独立仓库**，非 monorepo                | 各模块独立 clone/发版；本仓库仅作聚合与文档同步                |
+| 7 | 环境渠道     | **测试 + 生产**（移动端两个渠道，Web 两套构建变量）      | 见 2.2.2；地址均外置，不硬编码                         |
+| 8 | 健康检查与监控  | **仅 `/health`**，暂不引入就绪探针与 Prometheus | P0 仅需实现 `/health`                          |
+
+### 13.1 决策衍生需求
+
+- **决策 2 衍生**：移动端与 Web 端均为**四角色全量功能**，差异仅在交互形态
+  （移动端简表/卡片，Web 端完整表格/抽屉/批量编辑）。
+  **不得出现某功能仅存在于单一平台的情况**；移动端缺失的批量操作需提供逐条等效入口。
+- **决策 4 衍生**：新增数据表与接口（补充至第 4、7 节）：
+    - `idiom_questions` 表（成语题库，含答案、难度）
+    - `POST /admin/idioms/import`（批量导入）、`POST /admin/idioms/list`
+    - `POST /games/idiom/question`（学生端取题）
+- **决策 6 衍生**：四模块拆分独立仓库后，接口契约需有唯一权威来源；
+  本文档（第 7 节接口清单）即为契约基线，各仓库以其为准。
+- **决策 8 衍生**：不引入监控依赖，`/health` 返回静态 `status`，不探测数据库连通性。
 

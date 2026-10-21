@@ -1,0 +1,47 @@
+# ===== zg-tsp-ios Flutter 工程忽略规则 =====
+# 本模块可独立检出、构建、发布，不依赖仓库内其他模块
+
+# --- Flutter / Dart ---
+.dart_tool/
+.packages
+.pub-cache/
+.pub/
+build/
+.flutter-plugins
+.flutter-plugins-dependencies
+pubspec.lock          # 应用工程通常不提交 lock（库工程才提交）
+
+# --- 构建产物 ---
+*.ipa
+*.dSYM.zip
+*.app/
+
+# --- iOS 原生 ---
+ios/Pods/
+ios/.symlinks/
+ios/Flutter/Flutter.framework
+ios/Flutter/Flutter.podspec
+ios/Flutter/Generated.xcconfig
+ios/Flutter/flutter_export_environment.sh
+ios/Flutter/App.framework
+ios/Flutter/ephemeral/
+**/xcuserdata/
+*.xcuserstate
+**/DerivedData/
+
+# --- 签名与密钥（严禁提交）---
+ios/Runner/GoogleService-Info.plist
+**/*.p12
+**/*.mobileprovision
+**/*.cer
+**/*.certSigningRequest
+ios/Runner/Runner.entitlements.local
+
+# --- 配置覆盖（含环境地址，本地私有）---
+--dart-define 从命令行传入，不入库
+
+# --- IDE / 系统 ---
+.idea/
+.vscode/
+.DS_Store
+*.log
