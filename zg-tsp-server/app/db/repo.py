@@ -4,7 +4,7 @@
 所有方法均只读或返回 ORM 对象；写操作由调用方控制事务。
 """
 
-from datetime import datetime
+from datetime import date, datetime
 
 from sqlalchemy import Select, func, or_, select
 from sqlalchemy.orm import Session
@@ -13,6 +13,7 @@ from app.models.entities import (
     AdminLog,
     Class,
     Homework,
+    HomeworkRecord,
     PointLog,
     PointRule,
     TeacherInviteCode,
@@ -142,6 +143,101 @@ class Repo:
             .group_by(User.class_id)
         ).all()
         return {cid: cnt for cid, cnt in rows}
+
+    def add_class(self, klass: Class) -> Class:
+        self.db.add(klass)
+        self.db.flush()
+        return klass
+
+    def get_class_by_id(self, class_id: int) -> Class | None:
+        return self.db.get(Class, class_id)
+
+    def get_class_by_invite_code(self, invite_code: str) -> Class | None:
+        return self.db.scalar(select(Class).where(Class.invite_code == invite_code))
+
+    def list_classes_by_teacher(self, teacher_id: int) -> list[Class]:
+        return list(self.db.scalars(select(Class).where(Class.teacher_id == teacher_id).order_by(Class.id)))
+
+    def list_students_in_class(self, class_id: int) -> list[User]:
+        """班级内学生列表（决策 3：学生只属一个班级）。"""
+        return list(
+            self.db.scalars(
+                select(User).where(User.class_id == class_id).order_by(User.id)
+            )
+        )
+
+    # ---------------- 作业（PRD 5.3） ----------------
+
+    def add_homework(self, hw: Homework) -> Homework:
+        self.db.add(hw)
+        self.db.flush()
+        return hw
+
+    def get_homework_by_id(self, homework_id: int) -> Homework | None:
+        return self.db.get(Homework, homework_id)
+
+    def list_homework_paged(
+        self,
+        class_id: int,
+        page: int = 1,
+        size: int = 20,
+    ) -> tuple[list[Homework], int]:
+        total = self.db.scalar(
+            select(func.count()).select_from(Homework).where(Homework.class_id == class_id)
+        ) or 0
+        stmt = (
+            select(Homework)
+            .where(Homework.class_id == class_id)
+            .order_by(Homework.id.desc())
+            .offset((page - 1) * size)
+            .limit(size)
+        )
+        return list(self.db.scalars(stmt)), total
+
+    def list_homework_today(self, class_id: int, day: date) -> list[Homework]:
+        """学生端「今日作业」：当天截止的作业。"""
+        start = datetime.combine(day, datetime.min.time())
+        end = datetime.combine(day, datetime.max.time())
+        return list(
+            self.db.scalars(
+                select(Homework)
+                .where(Homework.class_id == class_id, Homework.deadline >= start, Homework.deadline <= end)
+                .order_by(Homework.deadline)
+            )
+        )
+
+    def add_homework_record(self, record: HomeworkRecord) -> HomeworkRecord:
+        self.db.add(record)
+        self.db.flush()
+        return record
+
+    def get_homework_record(
+        self, homework_id: int, student_id: int
+    ) -> HomeworkRecord | None:
+        return self.db.scalar(
+            select(HomeworkRecord).where(
+                HomeworkRecord.homework_id == homework_id,
+                HomeworkRecord.student_id == student_id,
+            )
+        )
+
+    def list_homework_records(self, homework_id: int) -> list[HomeworkRecord]:
+        return list(
+            self.db.scalars(
+                select(HomeworkRecord)
+                .where(HomeworkRecord.homework_id == homework_id)
+                .order_by(HomeworkRecord.id)
+            )
+        )
+
+    def count_submitted_records(self, homework_id: int) -> int:
+        """已提交（含迟交）人数 —— 用于「仅无人提交时可删除」判定。"""
+        return self.db.scalar(
+            select(func.count()).select_from(HomeworkRecord).where(
+                HomeworkRecord.homework_id == homework_id,
+                HomeworkRecord.submit_time.isnot(None),
+            )
+        ) or 0
 
     # ---------------- 老师邀请码 ----------------
 

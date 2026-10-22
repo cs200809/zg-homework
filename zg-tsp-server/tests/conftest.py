@@ -212,3 +212,43 @@ def make_invite(db, uname):
         return code
 
     return _make
+
+# ==================== P2 夹具 ====================
+
+
+@pytest.fixture
+def make_class(db, make_user):
+    """创建班级（含班主任），返回 (Class, teacher, teacher_password)。"""
+
+    def _make(name: str = "测试班", teacher=None):
+        from app.models.entities import Class
+
+        if teacher is None:
+            teacher, pw = make_user(ROLE_TEACHER, "cls")
+        else:
+            pw = None
+
+        import secrets
+        from app.db.repo import Repo
+
+        repo = Repo(db)
+        code = f"C{secrets.token_hex(3).upper()}"[:8]
+        klass = repo.add_class(
+            Class(name=name, invite_code=code, teacher_id=teacher.id)
+        )
+        db.commit()
+        return klass, teacher, pw
+
+    return _make
+
+
+@pytest.fixture
+def enroll(db):
+    """把学生加入班级。"""
+
+    def _enroll(student, klass):
+        student.class_id = klass.id
+        db.commit()
+        return student
+
+    return _enroll

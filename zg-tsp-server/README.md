@@ -51,8 +51,9 @@ app/
 │   ├── constants.py    枚举常量（角色、状态等）
 │   └── entities.py     SQLAlchemy 模型（14 张表）
 ├── schemas/         Pydantic 出入参
-├── routers/         路由：auth/classes/homework/checkin/points/
-│                    articles/games/parent/admin
+├── routers/         路由：auth / admin / classes / homework /
+│                    point_rules_admin / checkin / points /
+│                    articles / games / parent
 ├── services/        point_rule_service（60s 缓存）/ point_service
 ├── utils/           security(jwt/bcrypt) / deps(权限依赖) / response
 ├── seed/            建表与种子脚本（python -m app.seed.initial_data）
@@ -104,7 +105,7 @@ python -m app.seed.initial_data --reset
 ## 测试
 
 ```bash
-pytest                    # 137 个用例
+pytest                    # 172 个用例
 ```
 
 覆盖：
@@ -117,6 +118,11 @@ pytest                    # 137 个用例
   审计日志、缓存即时生效
 - **积分发放**：规则驱动、日次数上限、规则禁用不发放、游戏跨规则合计上限、
   家长扣分余额校验、余额不为负、明细可追溯
+- **班级**：创建/加入/查询/成员列表/移除；6 位邀请码；一个学生只属一个班级；
+  跨班操作 403
+- **作业**：布置/列表/今日/详情/完成情况/删除；开始不覆盖首次时间；
+  提交 multipart；迟交标记；用时<1 分钟标记异常；按时/迟交分别发放积分；
+  有人提交后禁止删除
 - **通用**：统一响应格式、无入参接口接受空 Body
 
 > **测试库约定：只增不删**
@@ -145,8 +151,8 @@ pytest                    # 137 个用例
 - [x] P1 JWT 认证 + 注册登录
 - [x] P1b 接入 MySQL：14 张表 + 种子数据
 - [x] P1.5 admin 基础：邀请码管理、用户管理、全局统计
-- [x] P1.6 积分规则管理 + 积分发放服务（137 测试通过）
-- [ ] P2 班级与作业
+- [x] P1.6 积分规则管理 + 积分发放服务
+- [x] P2 班级与作业（172 测试通过）
 - [ ] P3 签到与积分
 - [ ] P4 家长绑定扣分
 - [ ] P5 阅读
