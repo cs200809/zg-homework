@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.models.entities import (
     AdminLog,
+    Article,
     Checkin,
     Class,
     Homework,
@@ -18,6 +19,7 @@ from app.models.entities import (
     ParentStudent,
     PointLog,
     PointRule,
+    ReadingRecord,
     TeacherInviteCode,
     User,
 )
@@ -384,6 +386,90 @@ class Repo:
                 .order_by(ParentStudent.id)
             )
         )
+
+    # ---------------- 文章与阅读（PRD 5.5） ----------------
+
+    def add_article(self, art: Article) -> Article:
+        self.db.add(art)
+        self.db.flush()
+        return art
+
+    def get_article_by_id(self, article_id: int) -> Article | None:
+        return self.db.get(Article, article_id)
+
+    def list_articles_paged(
+        self,
+        status: str | None = None,
+        author_id: int | None = None,
+        keyword: str | None = None,
+        page: int = 1,
+        size: int = 20,
+    ) -> tuple[list[Article], int]:
+        """文章分页列表。学生端只传 status='published'。"""
+        stmt = select(Article)
+        count_stmt = select(func.count()).select_from(Article)
+
+        conditions = []
+        if status:
+            conditions.append(Article.status == status)
+        if author_id:
+            conditions.append(Article.author_id == author_id)
+        if keyword:
+            like = f"%{keyword}%"
+            conditions.append(or_(Article.title.like(like), Article.content.like(like)))
+        for c in conditions:
+            stmt = stmt.where(c)
+            count_stmt = count_stmt.where(c)
+
+        total = self.db.scalar(count_stmt) or 0
+        stmt = stmt.order_by(Article.id.desc()).offset((page - 1) * size).limit(size)
+        return list(self.db.scalars(stmt)), total
+
+    def add_reading_record(self, rec: ReadingRecord) -> ReadingRecord:
+        self.db.add(rec)
+        self.db.flush()
+        return rec
+
+    def get_reading_record(
+        self, article_id: int, student_id: int, day: date
+    ) -> ReadingRecord | None:
+        """当天的阅读记录（PRD 4.1：UNIQUE(article_id, student_id, read_date)）。"""
+        return self.db.scalar(
+            select(ReadingRecord).where(
+                ReadingRecord.article_id == article_id,
+                ReadingRecord.student_id == student_id,
+                ReadingRecord.read_date == day,
+            )
+        )
+
+    def list_reading_records(self, article_id: int) -> list[ReadingRecord]:
+        return list(
+            self.db.scalars(
+                select(ReadingRecord)
+                .where(ReadingRecord.article_id == article_id)
+                .order_by(ReadingRecord.id)
+            )
+        )
+
+    def article_read_stats(self, article_id: int) -> dict:
+        """阅读统计：阅读人数、完成数、总时长（PRD 5.8.4）。"""
+        row = self.db.execute(
+            select(
+                func.count(ReadingRecord.id).label("readers"),
+                func.coalesce(func.sum(ReadingRecord.duration_seconds), 0).label("seconds"),
+            ).where(ReadingRecord.article_id == article_id)
+        ).one()
+        finished = self.db.scalar(
+            select(func.count()).select_from(ReadingRecord).where(
+                ReadingRecord.article_id == article_id,
+                ReadingRecord.finished.is_(True),
+            )
+        ) or 0
+        return {
+            "reader_count": row.readers or 0,
+            "finished_count": finished,
+            "total_duration_seconds": int(row.seconds or 0),
+        }
 
     # ---------------- 老师邀请码 ----------------
 
