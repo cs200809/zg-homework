@@ -16,6 +16,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from app.config import settings
 from app.routers import (
     admin,
+    articles,
     auth,
     checkin,
     classes,
@@ -107,7 +108,7 @@ app.include_router(homework.router)
 app.include_router(checkin.router)
 app.include_router(points.router)
 app.include_router(parent.router)
+app.include_router(articles.router)
 
 # 其余业务路由在对应 Phase 挂载：
-# app.include_router(articles.router, prefix="/articles", tags=["阅读"])
 # app.include_router(games.router, prefix="/games", tags=["游戏"])

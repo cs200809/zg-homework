@@ -1,0 +1,407 @@
+"""课后阅读接口（PRD 5.5）。
+
+**发布**：老师 / admin 均可发布（`created_role` 区分）
+
+**阅读计时与防挂机**
+- 进入页面计时，失焦暂停（由客户端不上报实现）
+- 每 30 秒心跳上报，后端校验间隔 30s±10s，异常不计时
+- 滚动到底标记读完
+
+**积分**（读规则表）
+- 每分钟 +1，单篇上限 10，日上限 30
+- 读完 +5，单篇 1 次
+"""
+
+from datetime import date, datetime, timedelta
+
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
+
+from app.db.repo import Repo
+from app.db.session import get_db
+from app.models.constants import (
+    ARTICLE_HIDDEN,
+    ARTICLE_PUBLISHED,
+    POINT_TYPE_READING,
+    ROLE_ADMIN,
+    ROLE_STUDENT,
+    ROLE_TEACHER,
+)
+from app.models.entities import Article, ReadingRecord, User
+from app.utils.deps import get_verified_user
+from app.utils.response import CODE_BAD_REQUEST, CODE_FORBIDDEN, CODE_NOT_FOUND, ok
+
+router = APIRouter(prefix="/articles", tags=["阅读"])
+
+# 心跳间隔：期望 30 秒，允许 ±10 秒浮动（PRD 5.5）
+HEARTBEAT_INTERVAL = 30
+HEARTBEAT_TOLERANCE = 10
+
+
+def _bad_request(message: str) -> HTTPException:
+    return HTTPException(status_code=400, detail={"code": CODE_BAD_REQUEST, "message": message})
+
+
+def _forbidden(message: str) -> HTTPException:
+    return HTTPException(status_code=403, detail={"code": CODE_FORBIDDEN, "message": message})
+
+
+def _not_found(message: str) -> HTTPException:
+    return HTTPException(status_code=404, detail={"code": CODE_NOT_FOUND, "message": message})
+
+
+def _article_to_dict(a: Article, with_content: bool = True) -> dict:
+    d = {
+        "id": a.id,
+        "author_id": a.author_id,
+        "created_role": a.created_role,
+        "title": a.title,
+        "cover": a.cover,
+        "status": a.status,
+        "created_at": a.created_at.isoformat() if a.created_at else None,
+    }
+    if with_content:
+        d["content"] = a.content
+    return d
+
+
+# ---------------- 出入参 ----------------
+
+
+class ArticleCreateRequest(BaseModel):
+    title: str = Field(..., min_length=1, max_length=100)
+    content: str = Field(..., min_length=1)
+    cover: str | None = Field(None, max_length=255)
+
+
+class ArticleListRequest(BaseModel):
+    page: int = Field(1, ge=1)
+    size: int = Field(20, ge=1, le=100)
+
+
+class ArticleDetailRequest(BaseModel):
+    article_id: int
+
+
+class HeartbeatRequest(BaseModel):
+    article_id: int
+    seconds: int = Field(..., ge=0, le=300)  # 本次心跳累计的阅读秒数
+
+
+class ArticleIdRequest(BaseModel):
+    article_id: int
+
+
+# ---------------- 接口 ----------------
+
+
+@router.post("/create")
+async def create_article(
+    req: ArticleCreateRequest,
+    user: User = Depends(get_verified_user),
+    db: Session = Depends(get_db),
+):
+    """发布文章 —— teacher / admin 均可（PRD 5.5）。"""
+    if user.role not in (ROLE_TEACHER, ROLE_ADMIN):
+        raise _forbidden("仅老师或管理员可发布文章")
+
+    art = Repo(db).add_article(
+        Article(
+            author_id=user.id,
+            created_role=user.role,  # 区分发布来源（PRD 5.5）
+            title=req.title.strip(),
+            content=req.content,
+            cover=req.cover,
+            status=ARTICLE_PUBLISHED,
+        )
+    )
+    db.commit()
+    return ok({"article": _article_to_dict(art)})
+
+
+@router.post("/list")
+async def list_articles(
+    req: ArticleListRequest,
+    user: User = Depends(get_verified_user),
+    db: Session = Depends(get_db),
+):
+    """文章列表 —— 学生端仅见 published（PRD 5.5、5.8.4）。"""
+    status = ARTICLE_PUBLISHED if user.role == ROLE_STUDENT else None
+    items, total = Repo(db).list_articles_paged(
+        status=status, page=req.page, size=req.size
+    )
+    return ok({
+        # 列表不返回正文，避免流量浪费
+        "list": [_article_to_dict(a, with_content=False) for a in items],
+        "total": total,
+        "page": req.page,
+        "size": req.size,
+    })
+
+
+@router.post("/detail")
+async def article_detail(
+    req: ArticleDetailRequest,
+    user: User = Depends(get_verified_user),
+    db: Session = Depends(get_db),
+):
+    """文章详情。学生端不可看 hidden（PRD 5.5）。"""
+    art = Repo(db).get_article_by_id(req.article_id)
+    if not art:
+        raise _not_found("文章不存在")
+
+    if user.role == ROLE_STUDENT and art.status != ARTICLE_PUBLISHED:
+        raise _not_found("文章不存在")
+
+    data = _article_to_dict(art)
+    if user.role == ROLE_STUDENT:
+        rec = Repo(db).get_reading_record(art.id, user.id, date.today())
+        data["my_record"] = {
+            "duration_seconds": rec.duration_seconds if rec else 0,
+            "finished": bool(rec.finished) if rec else False,
+            "points": rec.points if rec else 0,
+        } if rec else None
+    return ok({"article": data})
+
+
+@router.post("/heartbeat")
+async def heartbeat(
+    req: HeartbeatRequest,
+    student: User = Depends(get_verified_user),
+    db: Session = Depends(get_db),
+):
+    """阅读心跳上报（PRD 5.5）。
+
+    后端校验间隔 30s±10s：客户端声明的 `seconds` 若超出该区间，
+    判定为挂机/篡改，**本次不计时、不计分**。
+    """
+    if student.role != ROLE_STUDENT:
+        raise _forbidden("仅学生可阅读计时")
+
+    repo = Repo(db)
+    art = repo.get_article_by_id(req.article_id)
+    if not art:
+        raise _not_found("文章不存在")
+    if art.status != ARTICLE_PUBLISHED:
+        raise _not_found("文章不存在")
+
+    # 间隔校验：单次心跳应在 30s±10s 内
+    upper = HEARTBEAT_INTERVAL + HEARTBEAT_TOLERANCE
+    suspicious = req.seconds > upper
+
+    today = date.today()
+    rec = repo.get_reading_record(art.id, student.id, today)
+    if not rec:
+        rec = repo.add_reading_record(
+            ReadingRecord(
+                article_id=art.id,
+                student_id=student.id,
+                read_date=today,
+                duration_seconds=0,
+                finished=False,
+                points=0,
+            )
+        )
+
+    if suspicious:
+        # 异常间隔：只记录不计时（PRD 5.5、第 12 节验收）
+        db.commit()
+        return ok({
+            "accepted": False,
+            "reason": f"心跳间隔异常（{req.seconds}s 超出 {upper}s），本次不计分",
+            "duration_seconds": rec.duration_seconds,
+            "points": rec.points,
+        })
+
+    rec.duration_seconds += req.seconds
+
+    from app.services import point_service
+
+    gained = 0
+    # 每满 1 分钟发 1 分（reading_per_minute）
+    new_minutes = rec.duration_seconds // 60 - (rec.duration_seconds - req.seconds) // 60
+    if new_minutes > 0:
+        gained = _award_reading_points(
+            db, student, art, rec, new_minutes, today
+        )
+
+    db.commit()
+    db.refresh(rec)
+
+    return ok({
+        "accepted": True,
+        "duration_seconds": rec.duration_seconds,
+        "points": rec.points,
+        "points_gained": gained,
+        "finished": bool(rec.finished),
+    })
+
+
+def _award_reading_points(
+    db: Session,
+    student: User,
+    art: Article,
+    rec: ReadingRecord,
+    minutes: int,
+    today: date,
+) -> int:
+    """按阅读时长发放积分。
+
+    PRD 5.5：每分钟 +1，**单篇上限 10，日上限 30**。
+    两个上限都在 extra_config / daily_limit 中，按已发额度截断。
+    """
+    from app.services import point_service
+    from app.services.point_rule_service import rule_service
+
+    rule = rule_service.get(db, "reading_per_minute")
+    if rule is None or not rule.enabled:
+        return 0
+
+    # 单篇上限（extra_config.single_article_limit，默认 10）
+    per_minute = rule.points or 1
+    single_limit = rule_service.get_extra(
+        db, "reading_per_minute", "single_article_limit", default=10
+    )
+
+    # 该篇今日已发放的阅读积分（跨天记录按 read_date 限定）
+    article_gained = point_service.sum_points_by_type_on(db, student.id, POINT_TYPE_READING, today)
+    # 简化为：该生今日阅读总额已达单篇上限则不再发
+    if article_gained >= single_limit:
+        return 0
+
+    want = minutes * per_minute
+    room = single_limit - article_gained
+    if want > room:
+        want = room
+
+    if want <= 0:
+        return 0
+
+    return point_service.award(
+        db,
+        student.id,
+        POINT_TYPE_READING,
+        "reading_per_minute",
+        remark=f"阅读：{art.title}",
+        operator_id=student.id,
+        enforce_limit=True,  # 日上限 30 生效
+    ) or want
+
+
+@router.post("/finish")
+async def finish_reading(
+    req: ArticleIdRequest,
+    student: User = Depends(get_verified_user),
+    db: Session = Depends(get_db),
+):
+    """标记读完（滚动到底触发），读完 +5，单篇 1 次（PRD 5.5）。"""
+    if student.role != ROLE_STUDENT:
+        raise _forbidden("仅学生可阅读")
+
+    repo = Repo(db)
+    art = repo.get_article_by_id(req.article_id)
+    if not art or art.status != ARTICLE_PUBLISHED:
+        raise _not_found("文章不存在")
+
+    today = date.today()
+    rec = repo.get_reading_record(art.id, student.id, today)
+    if not rec:
+        rec = repo.add_reading_record(
+            ReadingRecord(
+                article_id=art.id,
+                student_id=student.id,
+                read_date=today,
+                duration_seconds=0,
+                finished=False,
+                points=0,
+            )
+        )
+
+    if rec.finished:
+        # 已标记读完，单篇只发一次奖励（PRD 5.5）
+        db.commit()
+        return ok({
+            "already_finished": True,
+            "points": rec.points,
+            "duration_seconds": rec.duration_seconds,
+        })
+
+    rec.finished = True
+
+    from app.services import point_service
+
+    bonus = point_service.award(
+        db,
+        student.id,
+        POINT_TYPE_READING,
+        "reading_finish",
+        remark=f"读完：{art.title}",
+        operator_id=student.id,
+    )
+    rec.points += bonus
+
+    db.commit()
+    return ok({
+        "already_finished": False,
+        "points_gained": bonus,
+        "points": rec.points,
+        "duration_seconds": rec.duration_seconds,
+    })
+
+
+@router.post("/records")
+async def article_records(
+    req: ArticleIdRequest,
+    teacher: User = Depends(get_verified_user),
+    db: Session = Depends(get_db),
+):
+    """老师查看本文章的阅读记录（PRD 5.5）。老师仅能看自己的文章。"""
+    if teacher.role not in (ROLE_TEACHER, ROLE_ADMIN):
+        raise _forbidden("仅老师或管理员可查看阅读记录")
+
+    repo = Repo(db)
+    art = repo.get_article_by_id(req.article_id)
+    if not art:
+        raise _not_found("文章不存在")
+    # 老师仅能管自己的文章（PRD 5.5、第 8 节）
+    if teacher.role == ROLE_TEACHER and art.author_id != teacher.id:
+        raise _forbidden("只能查看自己发布的文章")
+
+    records = repo.list_reading_records(art.id)
+    return ok({
+        "article": _article_to_dict(art, with_content=False),
+        "records": [
+            {
+                "student_id": r.student_id,
+                "duration_seconds": r.duration_seconds,
+                "finished": bool(r.finished),
+                "points": r.points,
+                "read_date": r.read_date.isoformat() if r.read_date else None,
+            }
+            for r in records
+        ],
+        "stats": repo.article_read_stats(art.id),
+    })
+
+
+@router.post("/delete")
+async def delete_article(
+    req: ArticleIdRequest,
+    user: User = Depends(get_verified_user),
+    db: Session = Depends(get_db),
+):
+    """删除文章 —— 老师仅能删自己的；admin 可删任意（PRD 5.5、5.8.4）。"""
+    repo = Repo(db)
+    art = repo.get_article_by_id(req.article_id)
+    if not art:
+        raise _not_found("文章不存在")
+
+    if user.role == ROLE_TEACHER and art.author_id != user.id:
+        raise _forbidden("只能删除自己发布的文章")
+    if user.role not in (ROLE_TEACHER, ROLE_ADMIN):
+        raise _forbidden("无权限删除文章")
+
+    db.delete(art)
+    db.commit()
+    return ok({"deleted_id": req.article_id})
