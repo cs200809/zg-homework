@@ -53,7 +53,7 @@ app/
 ├── schemas/         Pydantic 出入参
 ├── routers/         路由：auth/classes/homework/checkin/points/
 │                    articles/games/parent/admin
-├── services/        point_rule_service / point_service / anti_cheat
+├── services/        point_rule_service（60s 缓存）/ point_service
 ├── utils/           security(jwt/bcrypt) / deps(权限依赖) / response
 ├── seed/            建表与种子脚本（python -m app.seed.initial_data）
 └── uploads/         上传文件（git 忽略内容）
@@ -104,7 +104,7 @@ python -m app.seed.initial_data --reset
 ## 测试
 
 ```bash
-pytest                    # 98 个用例
+pytest                    # 137 个用例
 ```
 
 覆盖：
@@ -113,6 +113,10 @@ pytest                    # 98 个用例
 - **admin**：邀请码全生命周期（生成/筛选/撤销/一码一用）、admin 账号保护、
   禁用后 JWT 立即失效与恢复、重置密码强制改密、用户列表筛选搜索、
   审计日志、全局统计
+- **积分规则**：列表/详情/单条更新/批量更新、rule_key 不可改、JSON 校验、
+  审计日志、缓存即时生效
+- **积分发放**：规则驱动、日次数上限、规则禁用不发放、游戏跨规则合计上限、
+  家长扣分余额校验、余额不为负、明细可追溯
 - **通用**：统一响应格式、无入参接口接受空 Body
 
 > **测试库约定：只增不删**
@@ -121,7 +125,9 @@ pytest                    # 98 个用例
 
 > - 每个用例用**随机后缀的唯一用户名**（如 `t_a1b2c3_stu01`），天然不冲突
 > - 只做 INSERT / UPDATE，**从不 TRUNCATE、从不 DELETE**
-> - 代价是测试数据会残留在库中（当前 users 表约 640 条测试记录）
+> - 代价是测试数据会残留在库中（users 表约 700+ 条测试记录）
+> - **规则表也是共享状态**：改规则的用例必须用 `set_rule` 夹具自备前置条件，
+   不能依赖种子默认值（否则受其他用例影响）
 >
 > 需要干净起点时手动执行 `python -m app.seed.initial_data --reset`。
 
@@ -138,8 +144,8 @@ pytest                    # 98 个用例
 - [x] P0 骨架：配置、health 检查、Dockerfile、目录结构
 - [x] P1 JWT 认证 + 注册登录
 - [x] P1b 接入 MySQL：14 张表 + 种子数据
-- [x] P1.5 admin 基础：邀请码管理、用户管理、全局统计（98 测试通过）
-- [ ] P1.6 积分规则管理
+- [x] P1.5 admin 基础：邀请码管理、用户管理、全局统计
+- [x] P1.6 积分规则管理 + 积分发放服务（137 测试通过）
 - [ ] P2 班级与作业
 - [ ] P3 签到与积分
 - [ ] P4 家长绑定扣分
