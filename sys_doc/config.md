@@ -5,3 +5,5 @@
     username: root
     password: 12345678
 ```
+## 当前 admin 的随机密码是 WR2k_lUsudpm8XY3
+

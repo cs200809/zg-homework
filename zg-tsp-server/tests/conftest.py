@@ -66,6 +66,22 @@ def db():
 
 
 @pytest.fixture
+def refresh(db):
+    """确保读到其他会话（HTTP 请求）刚提交的数据。
+
+    MySQL 默认 REPEATABLE READ：事务一旦开始就固定快照，之后 expire_all()
+    重新查询仍读到旧数据。因此必须先结束当前事务（rollback），再清掉会话内
+    对象缓存，让下一次查询开新事务取最新数据。
+    """
+
+    def _refresh() -> None:
+        db.rollback()  # 结束快照事务
+        db.expire_all()  # 清掉会话内对象缓存
+
+    return _refresh
+
+
+@pytest.fixture
 def uid():
     """本用例的唯一标识后缀，用于生成不冲突的用户名/邀请码。"""
     return secrets.token_hex(3)
@@ -73,10 +89,17 @@ def uid():
 
 @pytest.fixture
 def uname(uid):
-    """生成唯一用户名工厂：uname('stu') -> 't_a1b2c3_stu'（≤20 字符）。"""
+    """生成唯一用户名工厂：uname('stu') -> 't_a1b2c3_stu'（≤20 字符）。
+
+    每次调用都会换一个新后缀，因此同一用例内循环创建也不会撞唯一索引。
+    """
+    counter = 0
+    base = uid
 
     def _make(tag: str) -> str:
-        return f"t{uid}_{tag}"[:20]
+        nonlocal counter
+        counter += 1
+        return f"t{base}{counter:x}_{tag}"[:20]
 
     return _make
 
