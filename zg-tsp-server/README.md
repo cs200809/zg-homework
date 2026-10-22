@@ -54,7 +54,8 @@ app/
 ├── routers/         路由：auth / admin / classes / homework /
 │                    point_rules_admin / checkin / points /
 │                    articles / games
-├── services/        point_rule_service（60s 缓存）/ point_service
+├── services/        point_rule_service（60s 缓存）/ point_service /
+│                    sudoku（生成算法）/ idiom（题库与会话）
 ├── utils/           security(jwt/bcrypt) / deps(权限依赖) / response
 ├── seed/            建表与种子脚本（python -m app.seed.initial_data）
 └── uploads/         上传文件（git 忽略内容）
@@ -105,7 +106,7 @@ python -m app.seed.initial_data --reset
 ## 测试
 
 ```bash
-pytest                    # 252 个用例
+pytest                    # 294 个用例
 ```
 
 覆盖：
@@ -132,6 +133,11 @@ pytest                    # 252 个用例
   跨家长访问孩子 403
 - **阅读**：teacher/admin 发布、学生仅见 published、心跳 30s±10s 防挂机
   （异常不计分）、每分钟 +1、读完 +5 单篇一次、老师仅管自己的文章与记录
+- **游戏**：数独三档难度内置生成（唯一解校验）、提交答案服务端复核防伪造、
+  成语接龙 60 秒闯关答对 +1/题、题目与选项分离、未取题不可作答防重放、
+  游戏合计每日 20 分封顶（跨数独与成语）
+- **题库**：admin 批量导入（同批去重、skip/overwrite 模式）、编辑、启用开关、
+  单条与批量删除；干扰项不足时服务端补齐
 - **通用**：统一响应格式、无入参接口接受空 Body
 
 > **测试库约定：只增不删**
