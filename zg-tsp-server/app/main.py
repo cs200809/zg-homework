@@ -14,7 +14,16 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.config import settings
-from app.routers import admin, auth, checkin, classes, homework, point_rules_admin, points
+from app.routers import (
+    admin,
+    auth,
+    checkin,
+    classes,
+    homework,
+    parent,
+    point_rules_admin,
+    points,
+)
 from app.utils.response import (
     CODE_BAD_REQUEST,
     CODE_SERVER_ERROR,
@@ -97,8 +106,8 @@ app.include_router(classes.router)
 app.include_router(homework.router)
 app.include_router(checkin.router)
 app.include_router(points.router)
+app.include_router(parent.router)
 
 # 其余业务路由在对应 Phase 挂载：
 # app.include_router(articles.router, prefix="/articles", tags=["阅读"])
 # app.include_router(games.router, prefix="/games", tags=["游戏"])
-# app.include_router(parent.router, prefix="/parent", tags=["家长"])

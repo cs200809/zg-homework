@@ -53,7 +53,7 @@ app/
 ├── schemas/         Pydantic 出入参
 ├── routers/         路由：auth / admin / classes / homework /
 │                    point_rules_admin / checkin / points /
-│                    articles / games / parent
+│                    parent / articles / games
 ├── services/        point_rule_service（60s 缓存）/ point_service
 ├── utils/           security(jwt/bcrypt) / deps(权限依赖) / response
 ├── seed/            建表与种子脚本（python -m app.seed.initial_data）
@@ -105,7 +105,7 @@ python -m app.seed.initial_data --reset
 ## 测试
 
 ```bash
-pytest                    # 199 个用例
+pytest                    # 226 个用例
 ```
 
 覆盖：
@@ -127,6 +127,9 @@ pytest                    # 199 个用例
 - **排行榜**：日榜按当日流水、总榜按余额；同分按达成时间；排除 admin；
   my_rank 在前 50 之外也可见；家长无榜权限（PRD 8）
 - **积分**：明细分页与类型筛选、概览（今日/累计获得/累计消费/余额）
+- **家长**：绑定/多孩子/解绑、孩子明细与概览、预设扣分事项（看手机5/看电视5/
+  买玩具20/买零食10）、余额不足拦截、流水记负数且 operator 为家长；
+  跨家长访问孩子 403
 - **通用**：统一响应格式、无入参接口接受空 Body
 
 > **测试库约定：只增不删**
@@ -157,7 +160,7 @@ pytest                    # 199 个用例
 - [x] P1.5 admin 基础：邀请码管理、用户管理、全局统计
 - [x] P1.6 积分规则管理 + 积分发放服务
 - [x] P2 班级与作业
-- [x] P3 签到与排行榜（199 测试通过）
-- [ ] P4 家长绑定扣分
+- [x] P3 签到与排行榜
+- [x] P4 家长绑定与扣分（226 测试通过）
 - [ ] P5 阅读
 - [ ] P6 游戏（含成语题库导入）
