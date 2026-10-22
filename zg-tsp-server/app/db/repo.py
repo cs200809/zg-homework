@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.models.entities import (
     AdminLog,
+    Checkin,
     Class,
     Homework,
     HomeworkRecord,
@@ -238,6 +239,115 @@ class Repo:
                 HomeworkRecord.submit_time.isnot(None),
             )
         ) or 0
+
+    # ---------------- 签到（PRD 5.4） ----------------
+
+    def add_checkin(self, checkin: Checkin) -> Checkin:
+        self.db.add(checkin)
+        self.db.flush()
+        return checkin
+
+    def get_checkin(self, student_id: int, day: date) -> Checkin | None:
+        return self.db.scalar(
+            select(Checkin).where(Checkin.student_id == student_id, Checkin.checkin_date == day)
+        )
+
+    def list_checkins_desc(self, student_id: int, limit: int = 60) -> list[Checkin]:
+        """最近的签到记录（倒序），用于计算连续签到天数。"""
+        return list(
+            self.db.scalars(
+                select(Checkin)
+                .where(Checkin.student_id == student_id)
+                .order_by(Checkin.checkin_date.desc())
+                .limit(limit)
+            )
+        )
+
+    # ---------------- 排行榜（PRD 5.4） ----------------
+
+    def rank_day(
+        self, day: date, page: int = 1, size: int = 50
+    ) -> tuple[list[tuple[int, int]], int]:
+        """今日榜：按当日 PointLog 正向积分聚合。
+
+        返回 ([(student_id, points), ...], 参与人数)。
+        同分按「当日首次得分时间」先后 —— 先达成者靠前（PRD 5.4）。
+        排除 admin 角色（PRD 5.4、第 8 节）。
+        """
+        # 只统计学生：admin 不参与业务、不计积分（PRD 8）
+        pts = func.sum(PointLog.points)
+        first_id = func.min(PointLog.id)
+        base = (
+            select(PointLog.student_id, pts, first_id)
+            .join(User, User.id == PointLog.student_id)
+            .where(
+                PointLog.log_date == day,
+                PointLog.points > 0,
+                User.role == "student",
+            )
+            .group_by(PointLog.student_id)
+        )
+        total = self.db.scalar(
+            select(func.count()).select_from(base.subquery())
+        ) or 0
+
+        # first_id 单调递增，与达成时间先后一致（PRD 5.4）
+        rows = self.db.execute(
+            select(PointLog.student_id, pts, first_id)
+            .join(User, User.id == PointLog.student_id)
+            .where(
+                PointLog.log_date == day,
+                PointLog.points > 0,
+                User.role == "student",
+            )
+            .group_by(PointLog.student_id)
+            .order_by(pts.desc(), first_id.asc())
+            .offset((page - 1) * size)
+            .limit(size)
+        ).all()
+        return [(r[0], r[1]) for r in rows], total
+
+    def rank_total(
+        self, page: int = 1, size: int = 50
+    ) -> tuple[list[tuple[int, int]], int]:
+        """总榜：按 users.total_points 排序，排除 admin（PRD 5.4、第 8 节）。
+
+        同分按「首次获得积分的时间」先后 —— 用最早一条 point_logs.id 近似。
+        """
+        # 只取学生：admin 不参与业务、不计积分（PRD 8）
+        candidates = select(User.id, User.total_points).where(
+            User.role == "student"
+        )
+        total = self.db.scalar(
+            select(func.count()).select_from(candidates.subquery())
+        ) or 0
+
+        first_earn = (
+            select(PointLog.student_id.label("sid"), func.min(PointLog.id).label("first_id"))
+            .where(PointLog.points > 0)
+            .group_by(PointLog.student_id)
+            .subquery()
+        )
+        rows = self.db.execute(
+            select(User.id, User.total_points)
+            .outerjoin(first_earn, first_earn.c.sid == User.id)
+            .where(User.role == "student")
+            .order_by(User.total_points.desc(), first_earn.c.first_id.asc())
+            .offset((page - 1) * size)
+            .limit(size)
+        ).all()
+        return [(r[0], r[1]) for r in rows], total
+
+    def rank_position(self, student_id: int, day: date | None = None) -> int:
+        """某学生的名次（1 起）。day 传 None 表示总榜。"""
+        if day is None:
+            rows, _ = self.rank_total(page=1, size=10**6)
+        else:
+            rows, _ = self.rank_day(day=day, page=1, size=10**6)
+        for idx, (sid, _) in enumerate(rows, start=1):
+            if sid == student_id:
+                return idx
+        return 0
 
     # ---------------- 老师邀请码 ----------------
 
