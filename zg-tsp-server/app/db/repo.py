@@ -6,10 +6,18 @@
 
 from datetime import datetime
 
-from sqlalchemy import func, select
+from sqlalchemy import Select, func, or_, select
 from sqlalchemy.orm import Session
 
-from app.models.entities import PointRule, TeacherInviteCode, User
+from app.models.entities import (
+    AdminLog,
+    Class,
+    Homework,
+    PointLog,
+    PointRule,
+    TeacherInviteCode,
+    User,
+)
 
 
 class Repo:
@@ -37,6 +45,104 @@ class Repo:
     def count_users(self) -> int:
         return self.db.scalar(select(func.count()).select_from(User)) or 0
 
+    def list_users_paged(
+        self,
+        role: str | None = None,
+        status: str | None = None,
+        keyword: str | None = None,
+        page: int = 1,
+        size: int = 20,
+    ) -> tuple[list[User], int]:
+        """用户分页列表（角色/状态筛选 + 关键词搜索）。返回 (当前页, 总数)。
+
+        keyword 同时匹配 username 与 nickname（PRD 5.8.2「搜索」）。
+        """
+        stmt: Select = select(User)
+        count_stmt = select(func.count()).select_from(User)
+
+        conditions = []
+        if role:
+            conditions.append(User.role == role)
+        if status:
+            conditions.append(User.status == status)
+        if keyword:
+            like = f"%{keyword}%"
+            conditions.append(or_(User.username.like(like), User.nickname.like(like)))
+
+        for cond in conditions:
+            stmt = stmt.where(cond)
+            count_stmt = count_stmt.where(cond)
+
+        total = self.db.scalar(count_stmt) or 0
+        stmt = stmt.order_by(User.id).offset((page - 1) * size).limit(size)
+        return list(self.db.scalars(stmt)), total
+
+    # ---------------- 审计日志 ----------------
+
+    def add_admin_log(
+        self,
+        admin_id: int,
+        action: str,
+        target_type: str | None = None,
+        target_id: int | None = None,
+        detail: str | None = None,
+    ) -> AdminLog:
+        log = AdminLog(
+            admin_id=admin_id,
+            action=action,
+            target_type=target_type,
+            target_id=target_id,
+            detail=detail,
+        )
+        self.db.add(log)
+        self.db.flush()
+        return log
+
+    # ---------------- 统计（PRD 5.8.5） ----------------
+
+    def count_by_role(self, role: str) -> int:
+        return self.db.scalar(
+            select(func.count()).select_from(User).where(User.role == role)
+        ) or 0
+
+    def count_active_users(self) -> int:
+        return self.db.scalar(
+            select(func.count()).select_from(User).where(User.status == "active")
+        ) or 0
+
+    def count_classes(self) -> int:
+        return self.db.scalar(select(func.count()).select_from(Class)) or 0
+
+    def count_homework(self) -> int:
+        return self.db.scalar(select(func.count()).select_from(Homework)) or 0
+
+    def sum_points(self) -> int:
+        return self.db.scalar(
+            select(func.coalesce(func.sum(User.total_points), 0)).where(User.role == "student")
+        ) or 0
+
+    def count_point_logs(self) -> int:
+        return self.db.scalar(select(func.count()).select_from(PointLog)) or 0
+
+    def list_classes_paged(self, page: int = 1, size: int = 20) -> tuple[list[Class], int]:
+        total = self.count_classes()
+        stmt = (
+            select(Class)
+            .order_by(Class.id)
+            .offset((page - 1) * size)
+            .limit(size)
+        )
+        return list(self.db.scalars(stmt)), total
+
+    def count_students_by_class(self) -> dict[int, int]:
+        """各班级学生数，返回 {class_id: count}。"""
+        rows = self.db.execute(
+            select(User.class_id, func.count(User.id))
+            .where(User.class_id.isnot(None))
+            .group_by(User.class_id)
+        ).all()
+        return {cid: cnt for cid, cnt in rows}
+
     # ---------------- 老师邀请码 ----------------
 
     def add_invite_code(
@@ -59,6 +165,26 @@ class Repo:
 
     def list_invite_codes(self) -> list[TeacherInviteCode]:
         return list(self.db.scalars(select(TeacherInviteCode).order_by(TeacherInviteCode.id)))
+
+    def list_invite_codes_paged(
+        self,
+        status: str | None = None,
+        page: int = 1,
+        size: int = 20,
+    ) -> tuple[list[TeacherInviteCode], int]:
+        """邀请码分页列表（可按状态筛选）。返回 (当前页, 总数)。"""
+        stmt: Select = select(TeacherInviteCode)
+        count_stmt = select(func.count()).select_from(TeacherInviteCode)
+        if status:
+            stmt = stmt.where(TeacherInviteCode.status == status)
+            count_stmt = count_stmt.where(TeacherInviteCode.status == status)
+
+        total = self.db.scalar(count_stmt) or 0
+        stmt = stmt.order_by(TeacherInviteCode.id.desc()).offset((page - 1) * size).limit(size)
+        return list(self.db.scalars(stmt)), total
+
+    def get_invite_by_id(self, invite_id: int) -> TeacherInviteCode | None:
+        return self.db.get(TeacherInviteCode, invite_id)
 
     # ---------------- 积分规则 ----------------
 
