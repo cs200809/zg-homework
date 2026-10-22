@@ -15,6 +15,7 @@ from app.models.entities import (
     Class,
     Homework,
     HomeworkRecord,
+    ParentStudent,
     PointLog,
     PointRule,
     TeacherInviteCode,
@@ -348,6 +349,41 @@ class Repo:
             if sid == student_id:
                 return idx
         return 0
+
+    # ---------------- 家长-学生（PRD 5.7） ----------------
+
+    def get_user_by_bind_code(self, bind_code: str) -> User | None:
+        """按学生绑定码查学生（家长绑定用）。"""
+        return self.db.scalar(
+            select(User).where(
+                User.bind_code == bind_code.strip().upper(),
+                User.role == "student",
+            )
+        )
+
+    def add_parent_student(self, rel: ParentStudent) -> ParentStudent:
+        self.db.add(rel)
+        self.db.flush()
+        return rel
+
+    def get_parent_student(self, parent_id: int, student_id: int) -> ParentStudent | None:
+        return self.db.scalar(
+            select(ParentStudent).where(
+                ParentStudent.parent_id == parent_id,
+                ParentStudent.student_id == student_id,
+            )
+        )
+
+    def list_children(self, parent_id: int) -> list[User]:
+        """某家长绑定的孩子列表（PRD 5.7：一个家长可绑多个）。"""
+        return list(
+            self.db.scalars(
+                select(User)
+                .join(ParentStudent, ParentStudent.student_id == User.id)
+                .where(ParentStudent.parent_id == parent_id)
+                .order_by(ParentStudent.id)
+            )
+        )
 
     # ---------------- 老师邀请码 ----------------
 
