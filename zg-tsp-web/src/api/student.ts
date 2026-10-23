@@ -107,6 +107,14 @@ export const articleApi = {
 
   remove: (articleId: number) =>
     post<{ deleted_id: number }>('/articles/delete', { article_id: articleId }),
+
+  /** 发布文章（teacher / admin，PRD 5.5）。 */
+  create: (title: string, content: string, cover?: string) =>
+    post<{ article: Article }>('/articles/create', {
+      title,
+      content,
+      ...(cover ? { cover } : {}),
+    }),
 }
 
 // ---------- 游戏（PRD 5.6） ----------
