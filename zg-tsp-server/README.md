@@ -172,3 +172,17 @@ pytest                    # 294 个用例
 - [x] P4 家长绑定与扣分
 - [x] P5 课后阅读（252 测试通过）
 - [ ] P6 游戏（含成语题库导入）
+## 联调前端
+
+```bash
+# 终端 1：启动服务端
+cd zg-tsp-server && uvicorn app.main:app --host 127.0.0.1 --port 8000
+
+# 终端 2：启动 Web 端（Vite 代理 /api → 127.0.0.1:8000）
+cd zg-tsp-web && npm run dev
+```
+
+浏览器打开 http://localhost:5173
+
+> Vite 代理会把 `/api/xxx` 改写为 `/xxx` 再转发（服务端路径无 `/api` 前缀），
+> 服务端地址在 `zg-tsp-web/.env.development` 的 `VITE_PROXY_TARGET` 配置。
