@@ -17,7 +17,13 @@ export default defineConfig(({ mode }) => {
     server: {
       port: 5173,
       proxy: {
-        '/api': { target: proxyTarget, changeOrigin: true },
+        // 前端统一请求 /api/xxx，服务端实际路径是 /xxx（无 /api 前缀），
+        // 因此必须 rewrite 去掉 /api，否则服务端返回 404。
+        '/api': {
+          target: proxyTarget,
+          changeOrigin: true,
+          rewrite: (path) => path.replace(/^\/api/, ''),
+        },
       },
     },
     build: {
