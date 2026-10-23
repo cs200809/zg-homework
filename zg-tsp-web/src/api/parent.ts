@@ -17,10 +17,12 @@ import type {
 // ---------- 家长（PRD 5.7） ----------
 export const parentApi = {
   bind: (bindCode: string) =>
-    post<{ student_id: number; nickname: string | null; total_points: number }>(
-      '/parent/bind',
-      { bind_code: bindCode },
-    ),
+    post<{
+      student_id: number
+      username: string
+      nickname: string | null
+      total_points: number
+    }>('/parent/bind', { bind_code: bindCode }),
 
   children: () => post<{ list: Child[]; total: number }>('/parent/children'),
 
