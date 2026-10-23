@@ -68,18 +68,43 @@ flutter build ipa --flavor prod \
 
 ```
 lib/
-├── main.dart          应用入口
+├── main.dart          应用入口 + 角色路由守卫
 ├── core/
 │   ├── config.dart    构建期配置（API 基地址、渠道）
-│   └── api_client.dart HTTP 客户端（统一 POST、错误码、降级）
+│   ├── models.dart    数据类型定义
+│   ├── api_client.dart HTTP 客户端（统一 POST、错误码、降级）
+│   └── apis.dart      按领域封装的接口（auth/student/teacher/parent/admin）
+├── state/auth_state.dart  登录态（Provider + 本地持久化）
 ├── pages/
-│   ├── common/        登录/注册/强制改密
-│   ├── student/       学生端
-│   ├── parent/        家长端
-│   ├── teacher/       老师端（移动形态）
-│   └── admin/         admin 端（移动形态）
-└── widgets/           通用组件
+│   ├── common/        登录/注册/强制改密/我的
+│   ├── student/       首页/作业/阅读/游戏/积分
+│   ├── parent/        孩子/积分明细/消耗
+│   ├── teacher/       班级/作业/文章
+│   └── admin/         概览/邀请码/用户/规则
+└── widgets/           通用组件（StatCard/EmptyView/ErrorView 等）
 ```
+
+## 四角色导航（PRD 第 9 节）
+
+| 角色   | 底部导航                                      |
+|--------|--------------------------------------------|
+| 学生   | 首页 / 作业 / 阅读 / 游戏 / 我的                |
+| 老师   | 班级 / 作业 / 文章 / 我的                      |
+| admin  | 概览 / 邀请码 / 用户 / 规则 / 我的              |
+| 家长   | 我的孩子 / 我的                                |
+
+登录后按角色自动分流；admin 未改密时强制跳转改密页（PRD 5.1）。
+
+## 开发
+
+```bash
+flutter pub get
+flutter analyze          # 静态检查
+flutter test             # 单元测试
+flutter run --dart-define=API_BASE_URL=http://127.0.0.1:8000
+```
+
+> 构建需要安装 Xcode（iOS）；`flutter build ios --no-codesign` 亦可。
 
 ## 接口契约
 
@@ -89,5 +114,7 @@ lib/
 ## 开发进度
 
 - [x] P0 骨架：pubspec、配置、API 客户端、目录结构、.gitignore
-- [ ] P0 待补：`flutter create` 生成 `ios/` 平台工程（需先装 Flutter SDK）
-- [ ] P8 页面接入（PRD 第 9 节，四角色全覆盖）
+- [x] P0：`flutter create` 生成 `ios/` 平台工程
+- [x] P8 四角色页面：登录注册改密、学生端 5 页、老师端 3 面板、
+      admin 端 4 面板、家长端 2 页
+- [x] `flutter analyze` 无问题、`flutter test` 6 个用例通过
