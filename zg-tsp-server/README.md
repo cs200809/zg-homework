@@ -155,7 +155,8 @@ pytest                    # 294 个用例
 ## 接口契约
 
 全 POST + Body，参数不携带于 URL。统一响应 `{code, message, data}`。
-完整清单见 PRD 第 7 节（`sys_doc/PRD.md`）—— 这是与其他模块的唯一契约来源。
+完整清单见 PRD 第 7 节（`zg-tsp-docs` 仓库的 `sys_doc/PRD.md`）——
+这是与其他模块的唯一契约来源。
 
 错误码：`0` 成功 / `400` 参数错误 / `401` 未认证 / `403` 无权限 /
 `404` 不存在 / `429` 限流 / `500` 服务端错误
@@ -174,17 +175,21 @@ pytest                    # 294 个用例
 - [ ] P6 游戏（含成语题库导入）
 ## 验收脚本
 
+验收脚本随 `zg-tsp-docs` 仓库分发，需在聚合仓库（四模块同级）下运行：
+
 ```bash
-# 业务验收（PRD 第 12 节 16 条，对真实接口逐条验证）
-python ../scripts/acceptance_check.py
+# 业务验收（PRD 第 12 节，对真实接口逐条验证）
+python zg-tsp-docs/scripts/acceptance_check.py
 
 # 模块独立性检查（PRD 第 12 节「模块独立性」）
-python ../scripts/independence_check.py
+python zg-tsp-docs/scripts/independence_check.py
 ```
 
 > 验收脚本会自动确保 admin 可登录（必要时重置本地库密码）。
 
 ## 联调前端
+
+各模块独立仓库，需分别检出。聚合目录下：
 
 ```bash
 # 终端 1：启动服务端

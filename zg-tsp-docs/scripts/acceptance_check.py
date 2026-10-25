@@ -1,9 +1,12 @@
-"""P9 端到端验收脚本。
+"""端到端验收脚本。
 
 对照 PRD 第 12 节验收标准，逐条调用真实接口验证。
 用法：
-    cd zg-tsp-server && python -m scripts.acceptance_check
+    python zg-tsp-docs/scripts/acceptance_check.py
 需要服务端运行在 127.0.0.1:8000。
+
+注：本脚本随 zg-tsp-docs 仓库分发，会定位同级的 zg-tsp-server 仓库；
+若未检出到同级目录，自动重置 admin 密码的兜底逻辑会跳过。
 """
 
 import json
@@ -50,7 +53,7 @@ def _ensure_admin_login(c: httpx.Client) -> str | None:
 
     # 兜底：直接改库（脚本与 zg-tsp-server 同仓库，可直接 import app.*）
     try:
-        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "zg-tsp-server"))
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "zg-tsp-server"))
         from app.db.repo import Repo
         from app.db.session import SessionLocal
         from app.utils.security import hash_password
@@ -364,5 +367,5 @@ def summary() -> int:
 if __name__ == "__main__":
     # 支持直接执行：python scripts/acceptance_check.py
     # 需要能 import app.*，故把 zg-tsp-server 加入 sys.path
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "zg-tsp-server"))
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "zg-tsp-server"))
     sys.exit(main())
