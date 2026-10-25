@@ -80,7 +80,7 @@ lib/
 │   ├── student/       首页/作业/阅读/游戏/积分
 │   ├── parent/        孩子/积分明细/消耗
 │   ├── teacher/       班级/作业/文章
-│   └── admin/         概览/邀请码/用户/规则
+│   └── admin/         概览/邀请码/用户/规则/成语题库
 └── widgets/           通用组件（StatCard/EmptyView/ErrorView 等）
 ```
 
@@ -90,7 +90,7 @@ lib/
 |--------|--------------------------------------------|
 | 学生   | 首页 / 作业 / 阅读 / 游戏 / 我的                |
 | 老师   | 班级 / 作业 / 文章 / 我的                      |
-| admin  | 概览 / 邀请码 / 用户 / 规则 / 我的              |
+| admin  | 概览 / 邀请码 / 用户 / 规则 / 题库 / 我的        |
 | 家长   | 我的孩子 / 我的                                |
 
 ## 开发
@@ -113,5 +113,5 @@ flutter run --dart-define=API_BASE_URL=http://10.0.2.2:8000
 
 - [x] P0 骨架：pubspec、配置、API 客户端、目录结构、.gitignore
 - [x] P0：`flutter create` 生成 `android/` 平台工程
-- [x] P8 四角色页面（与 ios 端同源，各自仓库独立）
+- [x] P8 四角色页面（与 ios 端同源，各自仓库独立），含成语题库管理
 - [x] `flutter analyze` 无问题、`flutter test` 6 个用例通过

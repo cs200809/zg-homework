@@ -172,6 +172,18 @@ pytest                    # 294 个用例
 - [x] P4 家长绑定与扣分
 - [x] P5 课后阅读（252 测试通过）
 - [ ] P6 游戏（含成语题库导入）
+## 验收脚本
+
+```bash
+# 业务验收（PRD 第 12 节 16 条，对真实接口逐条验证）
+python ../scripts/acceptance_check.py
+
+# 模块独立性检查（PRD 第 12 节「模块独立性」）
+python ../scripts/independence_check.py
+```
+
+> 验收脚本会自动确保 admin 可登录（必要时重置本地库密码）。
+
 ## 联调前端
 
 ```bash

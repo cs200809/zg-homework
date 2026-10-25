@@ -80,7 +80,7 @@ lib/
 │   ├── student/       首页/作业/阅读/游戏/积分
 │   ├── parent/        孩子/积分明细/消耗
 │   ├── teacher/       班级/作业/文章
-│   └── admin/         概览/邀请码/用户/规则
+│   └── admin/         概览/邀请码/用户/规则/成语题库
 └── widgets/           通用组件（StatCard/EmptyView/ErrorView 等）
 ```
 
@@ -90,7 +90,7 @@ lib/
 |--------|--------------------------------------------|
 | 学生   | 首页 / 作业 / 阅读 / 游戏 / 我的                |
 | 老师   | 班级 / 作业 / 文章 / 我的                      |
-| admin  | 概览 / 邀请码 / 用户 / 规则 / 我的              |
+| admin  | 概览 / 邀请码 / 用户 / 规则 / 题库 / 我的        |
 | 家长   | 我的孩子 / 我的                                |
 
 登录后按角色自动分流；admin 未改密时强制跳转改密页（PRD 5.1）。
@@ -116,5 +116,5 @@ flutter run --dart-define=API_BASE_URL=http://127.0.0.1:8000
 - [x] P0 骨架：pubspec、配置、API 客户端、目录结构、.gitignore
 - [x] P0：`flutter create` 生成 `ios/` 平台工程
 - [x] P8 四角色页面：登录注册改密、学生端 5 页、老师端 3 面板、
-      admin 端 4 面板、家长端 2 页
+      admin 端 5 面板（含成语题库）、家长端 2 页
 - [x] `flutter analyze` 无问题、`flutter test` 6 个用例通过
