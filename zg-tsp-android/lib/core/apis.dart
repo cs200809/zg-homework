@@ -313,4 +313,47 @@ class AdminApi {
 
   Future<Json> deleteArticle(int id) =>
       ApiClient.instance.post('/articles/delete', body: {'article_id': id});
+  // ---- 成语题库（PRD 5.8.6） ----
+  Future<Json> idiomList({
+    int page = 1,
+    int size = 20,
+    String? keyword,
+    bool? enabled,
+  }) => ApiClient.instance.post('/admin/idioms/list', body: {
+    'page': page,
+    'size': size,
+    if (keyword != null && keyword.isNotEmpty) 'keyword': keyword,
+    if (enabled != null) 'enabled': enabled,
+  });
+
+  Future<Json> importIdioms(List<Map<String, dynamic>> items, String mode) =>
+    ApiClient.instance.post('/admin/idioms/import', body: {
+      'items': items,
+      'mode': mode,
+    });
+
+  Future<Json> updateIdiom({
+    required int questionId,
+    String? prompt,
+    String? answer,
+    List<String>? distractors,
+    String? difficulty,
+    bool? enabled,
+  }) => ApiClient.instance.post('/admin/idioms/update', body: {
+    'question_id': questionId,
+    if (prompt != null) 'prompt': prompt,
+    if (answer != null) 'answer': answer,
+    if (distractors != null) 'distractors': distractors,
+    if (difficulty != null) 'difficulty': difficulty,
+    if (enabled != null) 'enabled': enabled,
+  });
+
+  Future<Json> deleteIdiom(int questionId) =>
+    ApiClient.instance.post('/admin/idioms/delete', body: {'question_id': questionId});
+
+  Future<Json> batchDeleteIdioms(List<int> questionIds) =>
+    ApiClient.instance.post('/admin/idioms/batch-delete', body: {
+      'question_ids': questionIds,
+    });
+
 }

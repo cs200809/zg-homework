@@ -34,6 +34,7 @@ import AdminUsers from '../pages/admin/Users'
 import AdminRules from '../pages/admin/Rules'
 import AdminArticles from '../pages/admin/Articles'
 import AdminClasses from '../pages/admin/Classes'
+import AdminIdioms from '../pages/admin/Idioms'
 
 import ParentChildren from '../pages/parent/Children'
 import ParentChildPoints from '../pages/parent/ChildPoints'
@@ -140,6 +141,7 @@ export default function AppRouter() {
         <Route path="/admin/rules" element={<AdminRules />} />
         <Route path="/admin/articles" element={<AdminArticles />} />
         <Route path="/admin/classes" element={<AdminClasses />} />
+        <Route path="/admin/idioms" element={<AdminIdioms />} />
       </Route>
 
       {/* ---------- 家长端 ---------- */}

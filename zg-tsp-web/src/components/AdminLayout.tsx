@@ -50,6 +50,7 @@ const MENUS: Record<Role, NavItem[]> = {
     { key: '/admin/rules', label: '积分规则', icon: <SettingOutlined /> },
     { key: '/admin/articles', label: '文章管理', icon: <BookOutlined /> },
     { key: '/admin/classes', label: '班级总览', icon: <TeamOutlined /> },
+    { key: '/admin/idioms', label: '成语题库', icon: <SolutionOutlined /> },
   ],
   parent: [
     { key: '/parent', label: '我的孩子', icon: <SolutionOutlined /> },

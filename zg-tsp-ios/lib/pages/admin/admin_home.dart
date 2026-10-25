@@ -8,6 +8,7 @@ import '../../core/apis.dart';
 import '../../core/models.dart';
 import '../../widgets/common.dart';
 import '../common/profile_page.dart';
+import 'idiom_bank_page.dart';
 
 class AdminHome extends StatefulWidget {
   const AdminHome({super.key});
@@ -29,6 +30,7 @@ class _AdminHomeState extends State<AdminHome> {
           _InvitesPanel(),
           _UsersPanel(),
           _RulesPanel(),
+          IdiomBankPage(),
           ProfilePage(),
         ],
       ),
@@ -55,6 +57,11 @@ class _AdminHomeState extends State<AdminHome> {
             icon: Icon(Icons.tune_outlined),
             selectedIcon: Icon(Icons.tune),
             label: '规则',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.format_quote_outlined),
+            selectedIcon: Icon(Icons.format_quote),
+            label: '题库',
           ),
           NavigationDestination(
             icon: Icon(Icons.person_outline),
