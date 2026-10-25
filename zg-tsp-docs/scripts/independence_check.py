@@ -1,8 +1,10 @@
-"""模块独立性检查（PRD 第 12 节「模块独立性」7 条 + 补充）。
+"""模块独立性检查（PRD 第 12 节「模块独立性」）。
 
 静态分析四个模块的源码与配置，不依赖运行时。
 用法：
-    python scripts/independence_check.py
+    python zg-tsp-docs/scripts/independence_check.py
+
+需在**聚合仓库**（四个模块同级检出）下运行；若缺少任一模块则跳过对应检查。
 """
 
 import json
@@ -11,7 +13,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+# 聚合仓库根目录：本脚本位于 <root>/zg-tsp-docs/scripts/
+ROOT = Path(__file__).resolve().parent.parent.parent
 MODULES = ["zg-tsp-server", "zg-tsp-web", "zg-tsp-ios", "zg-tsp-android"]
 
 results: list[tuple[bool, str, str]] = []

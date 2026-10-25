@@ -106,8 +106,8 @@ flutter run --dart-define=API_BASE_URL=http://10.0.2.2:8000
 
 ## 接口契约
 
-全 POST + Body。完整清单见 PRD 第 7 节（`sys_doc/PRD.md`）——
-与其他模块的唯一契约来源。
+全 POST + Body。完整清单见 PRD 第 7 节（`zg-tsp-docs` 仓库的
+`sys_doc/PRD.md`）—— 与其他模块的唯一契约来源。
 
 ## 开发进度
 
