@@ -53,7 +53,15 @@
 - zg-tsp-android Android 移动端模块
 
 ```
-project/
+workspace/                            # 五个独立仓库同级检出（联调用）
+├── zg-tsp-docs/                      # 文档与契约（PRD、配置、验收脚本）
+│   ├── sys_doc/
+│   │   ├── PRD.md
+│   │   └── config.md
+│   └── scripts/
+│       ├── acceptance_check.py       # 业务验收
+│       └── independence_check.py    # 独立性检查
+│
 ├── zg-tsp-server/                    # 服务端（FastAPI）
 │   ├── app/
 │   │   ├── main.py
@@ -89,13 +97,14 @@ project/
 │   ├── .gitignore
 │   └── ...                           # Flutter 工程，产出 .ipa
 │
-├── zg-tsp-android/                   # Android 移动端（Flutter，四角色）
-│   ├── .gitignore
-│   └── ...                           # Flutter 工程，产出 .apk / .aab
-│
-└── sys_doc/
-    └── PRD.md
+└── zg-tsp-android/                   # Android 移动端（Flutter，四角色）
+    ├── .gitignore
+    └── ...                           # Flutter 工程，产出 .apk / .aab
 ```
+
+> **仓库形态（决策 6）**：上述五个目录是**五个独立 git 仓库**，各自检出、
+> 提交、发版。聚合检出仅为联调方便 —— 各模块始终可单独检出、单独安装依赖、
+> 单独启动、单独打包（PRD 2.2.1）。
 
 > **决策 6**：四个模块最终拆分为**独立仓库**发布，本目录为聚合与文档同步用；
 > 接口契约以第 7 节为唯一权威来源。
