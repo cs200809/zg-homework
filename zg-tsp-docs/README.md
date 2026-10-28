@@ -11,6 +11,7 @@
 |------|------|
 | `sys_doc/PRD.md` | 完整产品需求文档 v2.0 —— 数据模型、接口清单、权限矩阵、验收标准 |
 | `sys_doc/config.md` | 各环境配置项（数据库等） |
+| `sys_doc/ENV_SETUP.md` | 开发环境搭建指南 —— Xcode / CocoaPods / Android SDK / JDK / 签名配置 |
 | `scripts/acceptance_check.py` | 业务验收脚本：对照 PRD 第 12 节逐条调真实接口验证 |
 | `scripts/independence_check.py` | 模块独立性静态检查：依赖自封闭、零跨模块引用、无硬编码地址 |
 
