@@ -1,5 +1,10 @@
-#!/usr/bin/env bash
+#!/bin/sh
 # zg-tsp 一键启动脚本
+#
+# 本脚本刻意保持 POSIX sh 兼容：可用 sh / bash / zsh / dash 执行。
+# 因此不使用 bash 专有语法（数组、< <(...) 进程替换、$'...'、[[ ]] 等）。
+# 唯一非 POSIX 的依赖是 `local` 内建——sh/bash/zsh/dash 均支持，
+# 但 macOS 自带的 ksh93u+ 不支持，在 ksh 下会报 "local: not found"。
 #
 # 用法：
 #   ./scripts/dev.sh              # 启动 server + web（默认）
@@ -20,26 +25,33 @@
 #   VENV_PY     服务端 Python 解释器（默认 $REPOS_DIR/../zg-tsp/.venv/bin/python）
 #   DEVICE_ID   移动端设备 ID（默认自动探测真机/模拟器）
 
-set -euo pipefail
+set -eu
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# $0 在 POSIX sh 下即为脚本路径，兼容 bash / dash / zsh。
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 # --- 定位仓库目录 ---
+# POSIX sh 没有数组，改用换行分隔的字符串逐行遍历。
 find_repos_dir() {
-  local candidates=(
-    "${REPOS_DIR:-}"
-    "${ROOT}/../zg-tsp-repos"
-    "${ROOT}"
+  local candidates
+  candidates=$(printf '%s\n' \
+    "${REPOS_DIR:-}" \
+    "${ROOT}/../zg-tsp-repos" \
+    "${ROOT}" \
     "${HOME}/zg-tsp-repos"
   )
-  for d in "${candidates[@]}"; do
+  local d
+  # 用 while read 而非 for 词分割，避免路径含空格时被拆开。
+  while IFS= read -r d; do
     [ -n "$d" ] || continue
     if [ -d "$d/zg-tsp-server" ] && [ -d "$d/zg-tsp-web" ]; then
       echo "$d"
       return 0
     fi
-  done
+  done <<EOF
+${candidates}
+EOF
   return 1
 }
 
@@ -57,9 +69,15 @@ API_TARGET="${API_TARGET:-http://127.0.0.1:${SERVER_PORT}}"
 LOG_DIR="${LOG_DIR:-${ROOT}/.dev-logs}"
 PID_FILE="${LOG_DIR}/dev.pids"
 
+# start_bg 用它给子进程注入环境变量（空格分隔的 VAR=VAL 列表）。
+BG_ENV=""
+
 # --- 颜色 ---
+# 用 printf 生成 ESC 字符（\033 是 POSIX printf 支持的八进制转义），
+# 而不是 bash 专有的 $'\033[0;31m' 写法。
 if [ -t 1 ]; then
-  R=$'\033[0;31m'; G=$'\033[0;32m'; Y=$'\033[0;33m'; B=$'\033[0;36m'; N=$'\033[0m'
+  ESC=$(printf '\033')
+  R="${ESC}[0;31m"; G="${ESC}[0;32m"; Y="${ESC}[0;33m"; B="${ESC}[0;36m"; N="${ESC}[0m"
 else
   R=""; G=""; Y=""; B=""; N=""
 fi
@@ -105,7 +123,16 @@ start_bg() {
 
   # 用 exec 让子进程**替换** shell，$! 才是真正的服务进程 pid；
   # 否则 $! 指向的是会立刻退出的 subshell，记录下来就停不掉。
-  ( cd "$dir" && exec "$@" ) > "${LOG_DIR}/${name}.log" 2>&1 &
+  #
+  # BG_ENV 若非空，会以 `env <VAR=VAL>...` 的形式前置到命令前。
+  # 不能写成 `ANDROID_HOME=x exec flutter ...`——exec 的前置赋值会被
+  # 当成可执行文件名，所以这里统一走 env 命令。
+  if [ -n "${BG_ENV:-}" ]; then
+    # shellcheck disable=SC2086
+    ( cd "$dir" && exec env ${BG_ENV} "$@" ) > "${LOG_DIR}/${name}.log" 2>&1 &
+  else
+    ( cd "$dir" && exec "$@" ) > "${LOG_DIR}/${name}.log" 2>&1 &
+  fi
   local pid=$!
 
   # PID 文件格式：<模块名> <pid>，启动时只替换本模块的记录，
@@ -150,6 +177,7 @@ start_server() {
   if ! free_port "${SERVER_PORT}" "服务端"; then
     return 1
   fi
+  BG_ENV=""
   start_bg server "${REPOS_DIR}/zg-tsp-server" \
     "$py" -m uvicorn app.main:app --host 127.0.0.1 --port "${SERVER_PORT}" --reload
   wait_for_port "${SERVER_PORT}" 20 "服务端" || return 1
@@ -168,9 +196,12 @@ start_web() {
   if ! free_port "${WEB_PORT}" "Web 端"; then
     return 1
   fi
-  # 代理目标通过环境变量注入，不改动仓库内文件
-  VITE_PROXY_TARGET="${API_TARGET}" \
-    start_bg web "${REPOS_DIR}/zg-tsp-web" npm run dev -- --port "${WEB_PORT}"
+  # 代理目标通过环境变量注入，不改动仓库内文件。
+  # 用 BG_ENV（由 start_bg 转成 `env VAR=VAL` 前缀），
+  # 避免依赖「变量前缀作用于函数调用」这一各 shell 语义略有差异的行为。
+  BG_ENV="VITE_PROXY_TARGET=${API_TARGET}"
+  start_bg web "${REPOS_DIR}/zg-tsp-web" npm run dev -- --port "${WEB_PORT}"
+  BG_ENV=""
   wait_for_port "${WEB_PORT}" 25 "Web 端" || return 1
 }
 
@@ -260,15 +291,11 @@ start_mobile() {
   # 解析可用设备 ID：优先真机，无真机则起模拟器
   local device_id
   device_id="$(flutter_device_id "$plat" || true)"
-  local args=()
   # DEVICE_ID 显式指定时优先采用，跳过自动探测
   if [ -n "${DEVICE_ID:-}" ]; then
     device_id="$DEVICE_ID"
   fi
-  if [ -n "$device_id" ]; then
-    ok "使用设备：${device_id}"
-    args=(-d "$device_id")
-  else
+  if [ -z "$device_id" ]; then
     # 没有已连接设备，尝试拉起一个模拟器
     local emu
     emu="$(flutter emulators --machine 2>/dev/null | python3 -c '
@@ -303,9 +330,8 @@ sys.exit(1)
       echo "      也可用 DEVICE_ID 环境变量指定：DEVICE_ID=<id> $0 ${plat}"
       return 0
     fi
-    ok "使用设备：${device_id}"
-    args=(-d "$device_id")
   fi
+  ok "使用设备：${device_id}"
 
   # 移动端 API 走构建期注入
   local define="--dart-define=API_BASE_URL=${API_TARGET}"
@@ -319,16 +345,16 @@ sys.exit(1)
   #
   # 注意：不能用 `ANDROID_HOME=x exec flutter ...` —— start_bg 里是
   # `exec "$@"`，前置环境赋值会被当成可执行文件名。这里改用 env 命令。
-  local env_prefix=()
+  BG_ENV=""
   if [ "$plat" = "android" ]; then
     local sdk_root
     sdk_root="$(android_sdk_dir || true)"
     if [ -n "$sdk_root" ]; then
-      env_prefix=(env "ANDROID_HOME=$sdk_root" "ANDROID_SDK_ROOT=$sdk_root")
+      BG_ENV="ANDROID_HOME=${sdk_root} ANDROID_SDK_ROOT=${sdk_root}"
     fi
   fi
 
-  start_bg "${plat}" "$dir" "${env_prefix[@]}" flutter run "${args[@]}" "$define"
+  start_bg "${plat}" "$dir" flutter run -d "$device_id" "$define"
   warn "${plat} 端正在启动，首次编译较慢，请查看日志：${LOG_DIR}/${plat}.log"
 }
 
@@ -405,13 +431,39 @@ show_status() {
 
 tail_logs() {
   [ -d "$LOG_DIR" ] || { warn "还没有日志目录"; return 0; }
-  # 用数组收集，避免文件名含空格时被拆成多个参数
-  local files=()
+  # POSIX sh 没有数组，也没有 < <(...) 进程替换。
+  # 改为把日志文件列表写进临时文件，再逐行读取传给 tail -f，
+  # 这样文件名含空格也不会被拆成多个参数。
+  local list_file
+  list_file="$(mktemp "${TMPDIR:-/tmp}/zg-tsp-logs.XXXXXX")" || {
+    warn "无法创建临时文件"; return 1;
+  }
+  # shellcheck disable=SC2064
+  trap "rm -f '${list_file}'" EXIT INT TERM HUP
+
+  ls -1 "${LOG_DIR}"/*.log > "$list_file" 2>/dev/null || true
+
+  if [ ! -s "$list_file" ]; then
+    warn "暂无日志"
+    rm -f "$list_file"
+    trap - EXIT INT TERM HUP
+    return 0
+  fi
+
+  # 先读出所有文件路径到位置参数，再交给 tail -f。
+  # xargs 把换行转成参数分隔，但含空格的文件名仍会被拆开，
+  # 所以这里用 IFS= read 逐行累积到 "$@"。
+  local f
+  set --
   while IFS= read -r f; do
-    [ -n "$f" ] && files+=("$f")
-  done < <(ls -1 "${LOG_DIR}"/*.log 2>/dev/null || true)
-  [ ${#files[@]} -gt 0 ] || { warn "暂无日志"; return 0; }
-  tail -f "${files[@]}"
+    [ -n "$f" ] && set -- "$@" "$f"
+  done < "$list_file"
+
+  tail -f "$@"
+
+  rm -f "$list_file"
+  trap - EXIT INT TERM HUP
+  return 0
 }
 
 # --- 主流程 ---

@@ -100,13 +100,22 @@ python -m app.seed.initial_data --reset
 > 首次执行时 admin 密码随机生成，**仅打印一次**；
 > 也可先在 `.env` 设 `ADMIN_INIT_PASSWORD` 固定密码。
 >
-> 当前 `admin` 的随机密码已打印过一次（`WR2k_lUsudpm8XY3`），
-> 建议改密或用 `--reset` 重建。
+> **密码忘了怎么办**：用重置命令改回一个已知密码
+>
+> ```bash
+> python -m app.utils.reset_password admin --password 'admin123456'
+> ```
+>
+> 省略 `--password` 则随机生成并打印。重置后账号会解除禁用状态，
+> 并置 `must_change_password`，下次登录强制改密。
+>
+> ⚠️ 不要把随机种子密码写进文档 —— 首次改密后它就失效了，
+> 按文档登录会一直返回 400。
 
 ## 测试
 
 ```bash
-pytest                    # 294 个用例
+pytest                    # 310 个用例
 ```
 
 覆盖：

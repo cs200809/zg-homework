@@ -17,7 +17,6 @@ pydantic==2.10.4
 
 # --- 认证 / 安全 ---
 python-jose[cryptography]==3.3.0
-passlib[bcrypt]==1.7.4
 bcrypt==4.2.1
 python-multipart==0.0.20
 
@@ -31,3 +30,5 @@ pydantic-settings==2.7.0
 # --- 测试 ---
 pytest==8.3.4
 httpx==0.28.1
+# 仅测试用：生成 passlib 风格的存量哈希，验证与原生 bcrypt 的兼容性
+passlib[bcrypt]==1.7.4

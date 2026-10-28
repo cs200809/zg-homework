@@ -6,3 +6,4 @@ __pycache__/
 .env
 # 一键启动脚本产生的日志与 PID
 .dev-logs/
+/dist/
