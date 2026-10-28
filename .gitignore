@@ -4,3 +4,5 @@ __pycache__/
 .idea/
 .DS_Store
 .env
+# 一键启动脚本产生的日志与 PID
+.dev-logs/

@@ -162,6 +162,10 @@ flutter build appbundle --flavor prod --dart-define=API_BASE_URL=https://api.exa
 配合 Flutter flavor（`dev` / `prod`）区分测试与生产渠道（决策 7），不硬编码在业务代码里。
 两模块代码库同源，但**各自独立构建、独立签名、独立发版**。
 
+> 打包环境（Xcode / CocoaPods / Android SDK / JDK / 签名）搭建见
+> [开发环境搭建指南](ENV_SETUP.md)。亦可直接用一键脚本：
+> `./scripts/build.sh ios|android [dev|prod]`（自动补齐渠道配置并归档产物）。
+
 > - 学生端 / 家长端以移动端为主，移动优先布局；老师端 / admin 端以 Web 桌面端为主（移动端另有精简版，见 9.1）。
 > - 移动端技术栈为 **Flutter**，四角色全覆盖（决策 1、2）。
 > - 服务端接口清单见第 7 节，是四模块间唯一的契约来源。
