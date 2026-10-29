@@ -35,8 +35,9 @@ class _LoginPageState extends State<LoginPage> {
     try {
       await auth.login(_username.text.trim(), _password.text);
       if (!mounted) return;
-      // admin 首登强制改密由根路由处理（must_change_password）
-      Navigator.of(context).pushReplacementNamed('/home');
+      // 登录成功后由 RootGate 监听 AuthState 自动按角色分流（见 main.dart），
+      // 此处不再做 Navigator 跳转：MaterialApp 未配置路由表，pushNamed 会抛
+      // "Could not find a generator for route"。
     } catch (e) {
       if (mounted) showSnack(context, errorMessage(e), error: true);
     }
@@ -106,8 +107,9 @@ class _LoginPageState extends State<LoginPage> {
                   ),
                   const SizedBox(height: 12),
                   TextButton(
-                    onPressed: () =>
-                        Navigator.of(context).pushNamed('/register'),
+                    onPressed: () => Navigator.of(context).push(
+                      MaterialPageRoute(builder: (_) => const RegisterPage()),
+                    ),
                     child: const Text('没有账号？去注册'),
                   ),
                 ],
@@ -292,7 +294,8 @@ class _ChangePasswordPageState extends State<ChangePasswordPage> {
       if (!mounted) return;
       showSnack(context, '密码修改成功');
       if (widget.forced) {
-        Navigator.of(context).pushReplacementNamed('/home');
+        // 强制改密场景下本页就是 RootGate 的 home 内容，markPasswordChanged()
+        // 已 notifyListeners，RootGate 会自动切到对应角色的首页，无需跳转。
       } else {
         Navigator.of(context).pop();
       }

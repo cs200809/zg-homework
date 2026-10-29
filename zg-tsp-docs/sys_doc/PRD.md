@@ -37,7 +37,8 @@
 
 - **前端**：React 18 + Vite + Ant Design 5 + React Router 6 + Axios + Zustand
 - **后端**：Python 3.12 + FastAPI + SQLAlchemy 2.0 + Pydantic v2 + Uvicorn
-- **数据库**：SQLite（MVP，可平滑迁移 MySQL）
+- **数据库**：MySQL 8（字符集 utf8mb4；SQLAlchemy 2.0 + PyMySQL）
+  - 建表 SQL 见 4.1 节（以服务端 `app/models/entities.py` 的 ORM 定义为准）
 - **认证**：JWT（python-jose），密码 bcrypt 加密
 - **文件存储**：本地 `uploads/`（预留 OSS 接口）
 - **部署**：前后端分离，Nginx 反代（可选）
@@ -744,6 +745,7 @@ POST /articles/delete
 POST /games/sudoku/start
 POST /games/sudoku/result
 POST /games/idiom/start
+POST /games/idiom/question
 POST /games/idiom/answer
 POST /games/idiom/result
 POST /games/records

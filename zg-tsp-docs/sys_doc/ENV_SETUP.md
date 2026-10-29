@@ -30,6 +30,15 @@ iOS 与 Android 打包均已可执行。
 ./scripts/build.sh android dev --check     # Android 环境预检
 ```
 
+### 1.1 还需要你提供凭据的两项
+
+工具链装齐后，**出正式包还差两个凭据**，二者都不入库、需本地配置：
+
+| 凭据 | 位置 | 配置方式 | 缺失后果 |
+|------|------|---------|---------|
+| iOS 签名团队 | `DEVELOPMENT_TEAM` 环境变量 或 `project.pbxproj` | 见 5.3 | 渠道 ipa 无法签名 |
+| Android 正式 keystore | `zg-tsp-android/android/key.properties` | 见第 6 节 | release 退回 debug 签名，不可上架 |
+
 ---
 
 ## 2. 安装完整 Xcode（最关键的一步）
@@ -415,7 +424,24 @@ grep -o 'DEVELOPMENT_TEAM = [A-Z0-9]*' \
 ```
 
 若为空则打包会因「No signing certificate」失败。
-在 Xcode 图形界面配置更稳妥：
+
+**方式一：用 build.sh 的环境变量注入（推荐，可脚本化）**
+
+```bash
+DEVELOPMENT_TEAM=<你的 Team ID> ./scripts/build.sh ios dev
+```
+
+`build.sh` 会把它写进渠道 xcconfig（`ios/Flutter/Dev.xcconfig`）：
+
+```
+DEVELOPMENT_TEAM = <你的 Team ID>
+CODE_SIGN_STYLE = Automatic
+```
+
+该 xcconfig 是 `Debug/Release/Profile-Dev` 三个构建配置的 baseConfiguration，
+因此三个配置会同时带上签名团队。渠道已配置过时 `build.sh` 也会重新校验并更新该文件。
+
+**方式二：在 Xcode 图形界面配置**
 
 ```bash
 open zg-tsp-ios/ios/Runner.xcworkspace
@@ -423,6 +449,9 @@ open zg-tsp-ios/ios/Runner.xcworkspace
 
 选中 Runner target → Signing & Capabilities → 勾选 Automatically manage
 signing → 选择 Team。
+
+> 提示：方式一写入的是 `ios/Flutter/Dev.xcconfig`，该文件由脚本生成、已 gitignore；
+> 方式二直接改 `project.pbxproj`（入库）。两者选其一即可。
 
 ### 5.4 跳过签名（仅验证构建，不产出可安装 ipa）
 
@@ -445,6 +474,8 @@ keytool -genkey -v \
   -alias zgtsp
 
 # 2) 写入 zg-tsp-android/android/key.properties（不入库）
+#    也可直接复制模板：cp zg-tsp-android/android/key.properties.example \
+#                     zg-tsp-android/android/key.properties
 cat > zg-tsp-android/android/key.properties <<'EOF'
 storePassword=<keystore 密码>
 keyPassword=<key 密码>
@@ -455,6 +486,12 @@ EOF
 # 3) 确认 .gitignore 已忽略该文件
 grep key.properties zg-tsp-android/android/.gitignore
 ```
+
+> `storeFile` 支持绝对路径，也支持相对 `android/` 目录的相对路径
+> （如 `storeFile=../zg-tsp-release.jks`）。
+> `key.properties` 存在时 release 构建使用其中的正式签名；**文件缺失时自动退回
+> debug 签名**（`CN=Android Debug`，仅供内部测试，不可上架），
+> `build.sh` 的 `check_android_signing` 会同步给出告警。
 
 ---
 

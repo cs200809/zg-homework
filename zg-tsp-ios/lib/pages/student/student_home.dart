@@ -274,7 +274,11 @@ class _StudentOverviewState extends State<_StudentOverview> {
               backgroundColor: (homeworkStatusColor[status] ?? Colors.grey).withValues(alpha: .12),
               side: BorderSide.none,
             ),
-            onTap: () => Navigator.of(context).pushNamed('/homework/${hw['id']}'),
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => HomeworkDetailPage(homeworkId: hw['id'] as int),
+              ),
+            ),
           ),
         );
       }).toList(),

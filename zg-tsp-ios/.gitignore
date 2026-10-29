@@ -25,6 +25,10 @@ ios/Flutter/Generated.xcconfig
 ios/Flutter/flutter_export_environment.sh
 ios/Flutter/App.framework
 ios/Flutter/ephemeral/
+# 渠道 xcconfig：由 scripts/build.sh 生成，含注入的 DEVELOPMENT_TEAM
+# （Debug.xcconfig / Release.xcconfig 是 Flutter 工程模板的一部分，需要入库）
+ios/Flutter/Dev.xcconfig
+ios/Flutter/Prod.xcconfig
 **/xcuserdata/
 *.xcuserstate
 **/DerivedData/
@@ -48,3 +52,5 @@ ios/Runner/Runner.entitlements.local
 .vscode/
 .DS_Store
 *.log
+# --- 脚本自动生成的备份（scripts/build.sh 注入渠道配置时） ---
+*.bak

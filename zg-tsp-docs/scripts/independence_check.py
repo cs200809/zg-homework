@@ -113,14 +113,34 @@ def main() -> int:
           f"缺失: {docker}" if docker else "各自 Dockerfile")
 
     # 6. 移动端渠道配置（决策 7：测试 + 生产）
-    for mod in ("zg-tsp-ios", "zg-tsp-android"):
-        pub = (ROOT / mod / "pubspec.yaml")
-        has_flavor = pub.exists() and "flavors:" in pub.read_text(encoding="utf-8")
-        config = (ROOT / mod / "lib/core/config.dart")
-        has_define = config.exists() and "fromEnvironment" in config.read_text(encoding="utf-8")
-        check(has_flavor and has_define, f"6. {mod} 支持双渠道 + 构建期注入",
-              "flavors + --dart-define" if has_flavor and has_define else
-              f"flavors={has_flavor} dart-define={has_define}")
+    #    注意：渠道不是靠 pubspec.yaml 的 flavors: 键实现的——Flutter 不读那个键，
+    #    写了也不生效。真实机制是 scripts/build.sh 在打包时改写平台工程：
+    #      - Android：android/app/build.gradle.kts 的 productFlavors{dev,prod}
+    #      - iOS：scripts/lib/ios_flavor.py 生成 *-<Scheme> 构建配置与 <Scheme>.xcscheme
+    #    运行期渠道由 --dart-define=FLAVOR=dev|prod 注入，见 lib/core/config.dart。
+    def _has_define(mod: str) -> bool:
+        cfg = ROOT / mod / "lib/core/config.dart"
+        return cfg.exists() and "fromEnvironment" in cfg.read_text(encoding="utf-8")
+
+    android_gradle = ROOT / "zg-tsp-android/android/app/build.gradle.kts"
+    android_flavors = False
+    if android_gradle.exists():
+        gtext = android_gradle.read_text(encoding="utf-8")
+        android_flavors = (
+            "productFlavors" in gtext
+            and 'create("dev")' in gtext
+            and 'create("prod")' in gtext
+        )
+    check(android_flavors and _has_define("zg-tsp-android"),
+          "6. zg-tsp-android 支持双渠道 + 构建期注入",
+          "productFlavors{dev,prod} + --dart-define" if android_flavors and _has_define("zg-tsp-android")
+          else f"productFlavors={android_flavors} dart-define={_has_define('zg-tsp-android')}")
+
+    ios_flavor_tool = ROOT / "scripts/lib/ios_flavor.py"
+    check(ios_flavor_tool.exists() and _has_define("zg-tsp-ios"),
+          "6. zg-tsp-ios 支持双渠道 + 构建期注入",
+          "ios_flavor.py 生成 *-Dev 配置 + --dart-define" if ios_flavor_tool.exists() and _has_define("zg-tsp-ios")
+          else f"ios_flavor.py={ios_flavor_tool.exists()} dart-define={_has_define('zg-tsp-ios')}")
 
     # 7. 服务端不可用时客户端不崩溃（静态验证：是否有降级处理）
     web_degrade = (ROOT / "zg-tsp-web/src/api/client.ts").read_text(encoding="utf-8")

@@ -1,5 +1,9 @@
 allprojects {
     repositories {
+        // 国内镜像优先，避免 maven.google.com 直连超时导致构建卡死。
+        // 镜像缺少的构件会自动回落到后面的官方源。
+        maven { url = uri("https://maven.aliyun.com/repository/google") }
+        maven { url = uri("https://maven.aliyun.com/repository/public") }
         google()
         mavenCentral()
     }
