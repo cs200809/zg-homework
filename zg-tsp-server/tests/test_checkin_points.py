@@ -331,12 +331,13 @@ def test_rank_max_50(client, login, ranked_students):
     assert r.status_code == 200
 
 
-def test_rank_excludes_admin(client, login, ranked_students, admin_token, db, refresh):
+def test_rank_excludes_admin(client, login, ranked_students, admin_token, db, refresh, make_user):
     """排除 admin 角色（PRD 5.4、第 8 节、第 12 节验收）。
 
     给 admin 塞极高积分，仍不应出现在榜单中。
     """
-    admin = Repo(db).get_user_by_username("admin")
+    # 用独立的测试 admin 账号，不给真实 admin 塞积分（避免污染开发库）。
+    admin, _ = make_user(ROLE_ADMIN, "adm")
     admin.total_points = 99999
     db.add(PointLog(
         student_id=admin.id,

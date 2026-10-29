@@ -7,3 +7,4 @@ __pycache__/
 # 一键启动脚本产生的日志与 PID
 .dev-logs/
 /dist/
+/zg-tsp-server/tests/

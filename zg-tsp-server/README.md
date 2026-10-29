@@ -57,6 +57,7 @@ app/
 ├── services/        point_rule_service（60s 缓存）/ point_service /
 │                    sudoku（生成算法）/ idiom（题库与会话）
 ├── utils/           security(jwt/bcrypt) / deps(权限依赖) / response
+│                    reset_password(重置密码) / purge_test_data(清理测试数据)
 ├── seed/            建表与种子脚本（python -m app.seed.initial_data）
 └── uploads/         上传文件（git 忽略内容）
 
@@ -115,7 +116,7 @@ python -m app.seed.initial_data --reset
 ## 测试
 
 ```bash
-pytest                    # 310 个用例
+pytest                    # 316 个用例
 ```
 
 覆盖：
@@ -149,15 +150,27 @@ pytest                    # 310 个用例
   单条与批量删除；干扰项不足时服务端补齐
 - **通用**：统一响应格式、无入参接口接受空 Body
 
-> **测试库约定：只增不删**
+> **测试库约定：test_ 前缀 + 只增不删**
 >
 > 测试直接跑在开发库 `zg_tsp` 上（不另建测试库）。为保证用例互不干扰：
 
-> - 每个用例用**随机后缀的唯一用户名**（如 `t_a1b2c3_stu01`），天然不冲突
+> - 每个用例用**随机后缀的唯一用户名**（如 `test_a1b2c31_stu`），天然不冲突
+> - 所有测试数据统一以 **test_ 前缀**标识，与真实账号（admin、teacher01…）
+>   和种子邀请码（CLS2024、TEACH2024）明确区分
 > - 只做 INSERT / UPDATE，**从不 TRUNCATE、从不 DELETE**
-> - 代价是测试数据会残留在库中（users 表约 700+ 条测试记录）
+> - **夹具不得改动真实 admin 账号** —— admin_token 用独立的临时 admin 账号。
+   早期版本直接覆盖真实 admin 的密码，导致每跑一次 pytest，开发者按文档里的
+   密码登录就会突然 400（见 `tests/test_fixture_isolation.py`）
 > - **规则表也是共享状态**：改规则的用例必须用 `set_rule` 夹具自备前置条件，
    不能依赖种子默认值（否则受其他用例影响）
+>
+> 清理残留的测试数据：
+>
+> ```bash
+> python -m app.utils.purge_test_data --dry-run   # 先看统计
+> python -m app.utils.purge_test_data             # 交互确认后清理
+> python -m app.utils.purge_test_data --by-keep-list  # 只留种子数据，连旧命名残留一起清
+> ```
 >
 > 需要干净起点时手动执行 `python -m app.seed.initial_data --reset`。
 
