@@ -95,6 +95,10 @@ zg-tsp 移动端一键打包
                     prod 默认 https://api.example.com
   BUILD_OUTPUT_DIR  产物归档目录（默认 $ROOT/dist）
   VERSION           覆盖版本号（默认取 pubspec.yaml）
+  DEVELOPMENT_TEAM  iOS 签名团队 ID（Apple Developer Team ID）
+                    设置后会写入渠道 xcconfig（ios/Flutter/<Scheme>.xcconfig），
+                    使 Debug/Release/Profile-<Scheme> 三个构建配置都带上签名团队。
+                    不设置则回退为「在 Xcode 中为 Runner target 配置 Signing Team」。
 
 示例：
   API_BASE_URL=https://test.example.com ./scripts/build.sh ios dev
@@ -381,14 +385,21 @@ check_android_signing() {
 check_ios_signing() {
   local dir="$1"
   local team
-  # 没有匹配时 grep 返回 1，配合 set -o pipefail 会让整个管道返回 1，
-  # 而命令替换在 set -e 下会直接终止脚本——所以必须显式兜底。
-  team="$(grep -o 'DEVELOPMENT_TEAM = [A-Za-z0-9]*' "${dir}/ios/Runner.xcodeproj/project.pbxproj" 2>/dev/null | head -1 | awk '{print $3}' || true)"
+  # 优先用环境变量：build.sh 会把它写进渠道 xcconfig，
+  # 覆盖 Debug/Release/Profile-<Scheme> 三个构建配置。
+  team="${DEVELOPMENT_TEAM:-}"
+  if [ -z "$team" ]; then
+    # 没有匹配时 grep 返回 1，配合 set -o pipefail 会让整个管道返回 1，
+    # 而命令替换在 set -e 下会直接终止脚本——所以必须显式兜底。
+    team="$(grep -o 'DEVELOPMENT_TEAM = [A-Za-z0-9]*' "${dir}/ios/Runner.xcodeproj/project.pbxproj" 2>/dev/null | head -1 | awk '{print $3}' || true)"
+  fi
   if [ -n "$team" ]; then
     check_ok "签名团队已配置（DEVELOPMENT_TEAM=${team}）"
   else
-    warn "未检测到 DEVELOPMENT_TEAM，release 渠道可能无法签名"
-    echo "      在 Xcode 中为 Runner target 配置 Signing Team 后重试"
+    warn "未检测到 DEVELOPMENT_TEAM，release 渠道无法签名出包"
+    echo "      二选一："
+    echo "        1) export DEVELOPMENT_TEAM=<你的 Team ID>（build.sh 会写入渠道 xcconfig）"
+    echo "        2) 在 Xcode 中为 Runner target 配置 Signing Team"
   fi
 }
 
@@ -408,12 +419,47 @@ default_api_base_url() {
 #   build configuration 名 = <基础配置>-<scheme>（Release-Dev / Release-Prod）
 # Scheme 文件名就是 scheme 名（xcscheme 内没有 name 属性，Xcode 取文件名），
 # 因此需要同时补 Scheme 与 XCBuildConfiguration。
+# 生成/更新渠道 xcconfig。
+#
+# 该文件是渠道构建配置（Debug/Release/Profile-<Scheme>）的 baseConfiguration，
+# 因此写在这里的 DEVELOPMENT_TEAM 会被三个配置同时继承。
+#
+# 每次都跑：渠道 scheme 已存在时也要更新签名团队，
+# 否则先跑一次不带 DEVELOPMENT_TEAM 的打包、之后再补上团队就不会生效。
+ensure_ios_xcconfig() {
+  local xcconfig="$1" scheme="$2"
+  local team="${DEVELOPMENT_TEAM:-}"
+
+  # 文件已存在且 Team 已一致 → 无需改动
+  if [ -f "$xcconfig" ]; then
+    if [ -z "$team" ] || grep -q "^DEVELOPMENT_TEAM = ${team}$" "$xcconfig"; then
+      return 0
+    fi
+  fi
+
+  {
+    echo "// ${scheme} 渠道配置（由 scripts/build.sh 生成）"
+    echo "#include \"Generated.xcconfig\""
+    if [ -n "$team" ]; then
+      echo ""
+      echo "// 签名团队：由 scripts/build.sh 的 DEVELOPMENT_TEAM 环境变量注入"
+      echo "DEVELOPMENT_TEAM = ${team}"
+      echo "CODE_SIGN_STYLE = Automatic"
+    fi
+  } > "$xcconfig"
+  ok "生成 ios/Flutter/${scheme}.xcconfig${team:+（DEVELOPMENT_TEAM=${team}）}"
+}
+
 ensure_ios_flavor() {
   local dir="$1" flavor="$2"
   local scheme; scheme="$(upper_first "$flavor")"   # dev → Dev
   local proj="${dir}/ios/Runner.xcodeproj"
   local scheme_dir="${proj}/xcshareddata/xcschemes"
   local xcconfig="${dir}/ios/Flutter/${scheme}.xcconfig"
+
+  # 1) xcconfig：渠道差异化配置。必须放在 scheme 早退之前，
+  #    这样渠道已配置的情况下也能补上/更新 DEVELOPMENT_TEAM。
+  ensure_ios_xcconfig "$xcconfig" "$scheme"
 
   # 已有 scheme 则认为渠道已配置
   if [ -f "${scheme_dir}/${scheme}.xcscheme" ]; then
@@ -422,15 +468,6 @@ ensure_ios_flavor() {
   fi
 
   info "补齐 iOS 渠道配置：${scheme}"
-
-  # 1) xcconfig：渠道差异化配置（目前主要是 include Generated.xcconfig）
-  if [ ! -f "$xcconfig" ]; then
-    cat > "$xcconfig" <<EOF
-// ${scheme} 渠道配置（由 scripts/build.sh 生成）
-#include "Generated.xcconfig"
-EOF
-    ok "生成 ios/Flutter/${scheme}.xcconfig"
-  fi
 
   # 2) pbxproj：新增 XCBuildConfiguration + XCConfigurationList
   python3 "$(dirname "${BASH_SOURCE[0]}")/lib/ios_flavor.py" \

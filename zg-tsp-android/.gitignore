@@ -36,3 +36,5 @@ android/key.properties           # 签名配置，严禁提交
 .vscode/
 .DS_Store
 *.log
+# --- 脚本自动生成的备份（scripts/build.sh 注入渠道配置时） ---
+*.bak

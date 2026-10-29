@@ -29,3 +29,9 @@ htmlcov/
 
 # 测试（pytest.ini 已跟踪，仅忽略缓存）
 .pytest_cache/
+
+# 测试用例：统一放在 tests/ 下，不入库。
+# 原因：pytest 直接跑在开发库 zg_tsp 上，只增不删、执行完会在库中留下真实数据，
+# 属于本地联调资产。本地文件保留，仅从 git 索引移除。
+# 注意：本仓库经 git subtree split 拆为独立仓库后此规则依然生效。
+tests/
