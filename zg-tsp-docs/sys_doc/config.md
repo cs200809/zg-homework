@@ -5,5 +5,18 @@
     username: root
     password: 12345678
 ```
-## 当前 admin 的随机密码是 WR2k_lUsudpm8XY3
+## admin 账号
+
+- 用户名：`admin`
+- 密码：`admin123456`
+
+> 种子初始化时若未设置 `ADMIN_INIT_PASSWORD`，admin 密码会随机生成且**仅打印一次**，
+> 首登改密后即失效。忘记密码时用重置命令改回：
+>
+> ```bash
+> cd zg-tsp-server
+> python -m app.utils.reset_password admin --password 'admin123456'
+> ```
+>
+> 省略 `--password` 则随机生成并打印。
 

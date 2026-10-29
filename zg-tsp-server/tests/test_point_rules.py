@@ -171,7 +171,11 @@ def test_rule_key_not_updatable(client, admin_token, db, refresh):
 
 def test_rule_update_writes_admin_log(client, admin_token, db, refresh):
     """修改规则写审计日志（PRD 5.8.3）。"""
-    admin = Repo(db).get_user_by_username("admin")
+    from app.utils.deps import decode_access_token
+
+    # 审计日志记的是实际操作者。admin_token 用的是独立的临时 admin 账号
+    # （不再覆盖真实 admin 的密码），因此要从 token 里取操作者 id。
+    actor_id = decode_access_token(admin_token)["user_id"]
     admin_post(client, "/admin/rules/update", {"rule_key": "checkin_daily", "points": 42}, token=admin_token)
     refresh()
 
@@ -180,7 +184,7 @@ def test_rule_update_writes_admin_log(client, admin_token, db, refresh):
     from app.models.entities import AdminLog
 
     logs = db.scalars(
-        select(AdminLog).where(AdminLog.admin_id == admin.id, AdminLog.action == "rule_update")
+        select(AdminLog).where(AdminLog.admin_id == actor_id, AdminLog.action == "rule_update")
     ).all()
     assert len(logs) >= 1
     assert "checkin_daily" in logs[-1].detail

@@ -47,9 +47,9 @@ def game_rules(set_rule):
 
 
 @pytest.fixture
-def seeded_idioms(client, admin_token, db, uname):
+def seeded_idioms(client, admin_token, db, uname, uniq):
     """导入若干成语题目，返回题干列表。"""
-    prompts = [uname(f"I{i}")[:8].upper() for i in range(5)]
+    prompts = [uniq(f"I{i}").upper()[:8] for i in range(5)]
     items = [
         {"prompt": p, "answer": f"答案{p}", "distractors": ["干扰A", "干扰B"]}
         for p in prompts
@@ -465,9 +465,9 @@ def test_game_records_only_student(client, login, make_user):
 # ==================== 5.8.6 成语题库管理 ====================
 
 
-def test_idiom_import(client, admin_token, uname):
+def test_idiom_import(client, admin_token, uname, uniq):
     """批量导入（PRD 5.8.6）。"""
-    prompts = [uname(f"Z{i}")[:8].upper() for i in range(3)]
+    prompts = [uniq(f"Z{i}").upper()[:8] for i in range(3)]
     r = post(
         client,
         "/admin/idioms/import",
@@ -478,9 +478,9 @@ def test_idiom_import(client, admin_token, uname):
     assert r.json()["data"]["success_count"] == 3
 
 
-def test_idiom_import_dedupe_in_batch(client, admin_token, uname):
+def test_idiom_import_dedupe_in_batch(client, admin_token, uname, uniq):
     """同批内 prompt 去重（PRD 5.8.6）。"""
-    p = uname("DUPA")[:8].upper()
+    p = uniq("DUPA").upper()[:8]
     r = post(
         client,
         "/admin/idioms/import",
@@ -494,9 +494,9 @@ def test_idiom_import_dedupe_in_batch(client, admin_token, uname):
     assert r.json()["data"]["duplicates_in_batch"] == 1
 
 
-def test_idiom_import_skip_existing(client, admin_token, uname):
+def test_idiom_import_skip_existing(client, admin_token, uname, uniq):
     """mode=skip：已存在则跳过（PRD 5.8.6）。"""
-    p = uname("SKIP")[:8].upper()
+    p = uniq("SKIP").upper()[:8]
     post(client, "/admin/idioms/import", {"items": [{"prompt": p, "answer": "原答案"}]}, token=admin_token)
 
     r = post(
@@ -509,9 +509,9 @@ def test_idiom_import_skip_existing(client, admin_token, uname):
     assert r.json()["data"]["skipped_count"] == 1
 
 
-def test_idiom_import_overwrite_existing(client, admin_token, uname, db, refresh):
+def test_idiom_import_overwrite_existing(client, admin_token, uname, db, refresh, uniq):
     """mode=overwrite：覆盖已有题目。"""
-    p = uname("OVR")[:8].upper()
+    p = uniq("OVR").upper()[:8]
     post(client, "/admin/idioms/import", {"items": [{"prompt": p, "answer": "原答案"}]}, token=admin_token)
 
     r = post(
@@ -526,41 +526,43 @@ def test_idiom_import_overwrite_existing(client, admin_token, uname, db, refresh
     assert db.scalar(select(IdiomQuestion).where(IdiomQuestion.prompt == p)).answer == "新答案"
 
 
-def test_idiom_import_invalid_mode(client, admin_token, uname):
+def test_idiom_import_invalid_mode(client, admin_token, uname, uniq):
     r = post(
         client,
         "/admin/idioms/import",
-        {"items": [{"prompt": uname("M")[:8].upper(), "answer": "a"}], "mode": "weird"},
+        {"items": [{"prompt": uniq("M").upper()[:8], "answer": "a"}], "mode": "weird"},
         token=admin_token,
     )
     assert r.status_code == 400
 
 
-def test_idiom_import_requires_admin(client, login, make_user, uname):
+def test_idiom_import_requires_admin(client, login, make_user, uname, uniq):
     teacher, pw = make_user(ROLE_TEACHER, "ia2")
     r = post(
         client,
         "/admin/idioms/import",
-        {"items": [{"prompt": uname("X")[:8].upper(), "answer": "a"}]},
+        {"items": [{"prompt": uniq("X").upper()[:8], "answer": "a"}]},
         token=login(teacher, pw),
     )
     assert r.status_code == 403
 
 
-def test_idiom_import_writes_admin_log(client, admin_token, db, refresh, uname):
+def test_idiom_import_writes_admin_log(client, admin_token, db, refresh, uname, uniq):
     from app.models.entities import AdminLog
+    from app.utils.deps import decode_access_token
 
-    admin = Repo(db).get_user_by_username("admin")
+    # 审计日志记的是实际操作者（临时 admin 账号），不是真实 admin。
+    actor_id = decode_access_token(admin_token)["user_id"]
     post(
         client,
         "/admin/idioms/import",
-        {"items": [{"prompt": uname("LOG")[:8].upper(), "answer": "a"}]},
+        {"items": [{"prompt": uniq("LOG").upper()[:8], "answer": "a"}]},
         token=admin_token,
     )
     refresh()
 
     logs = db.scalars(
-        select(AdminLog).where(AdminLog.admin_id == admin.id, AdminLog.action == "idiom_import")
+        select(AdminLog).where(AdminLog.admin_id == actor_id, AdminLog.action == "idiom_import")
     ).all()
     assert len(logs) >= 1
 
@@ -614,10 +616,10 @@ def test_idiom_batch_delete(client, admin_token, seeded_idioms, db, refresh):
         assert db.get(IdiomQuestion, i) is None
 
 
-def test_idiom_distractors_padded(client, login, make_user, admin_token, db, uname, refresh):
+def test_idiom_distractors_padded(client, login, make_user, admin_token, db, uname, refresh, uniq):
     """干扰项不足时服务端补齐（PRD 5.8.6）。"""
     # 导入一批不含 distractors 的题目
-    prompts = [uname(f"P{i}")[:8].upper() for i in range(4)]
+    prompts = [uniq(f"P{i}").upper()[:8] for i in range(4)]
     post(
         client,
         "/admin/idioms/import",

@@ -295,28 +295,20 @@ def test_change_password_success(client, make_user, login):
     assert post(client, "/auth/login", {"username": user.username, "password": password}).status_code == 400
 
 
-def test_change_password_clears_must_change_flag(client, db, login):
-    """admin 改密后强制改密标记解除（PRD 5.1）。"""
-    from app.models.entities import User
-    from app.utils.security import hash_password
+def test_change_password_clears_must_change_flag(client, db, login, admin_pending_change, refresh):
+    """admin 改密后强制改密标记解除（PRD 5.1）。
 
-    admin = Repo(db).get_user_by_username("admin")
-    if admin is None:
-        admin = User(username="admin", password_hash=hash_password("x"), role=ROLE_ADMIN)
-        db.add(admin)
-        db.commit()
-        db.refresh(admin)
+    用**独立的测试 admin 账号**，不要改真实 admin 的密码 ——
+    那会污染开发库，让开发者按文档里的密码登录直接 400。
+    """
+    admin, password = admin_pending_change
 
-    admin.password_hash = hash_password("firstpass1")
-    admin.must_change_password = True
-    admin.status = "active"
-    db.commit()
-
-    token = login("admin", "firstpass1")
+    token = login(admin.username, password)
     r = post(client, "/auth/change-password", {"old_password": "firstpass1", "new_password": "brandnew123"}, token=token)
     assert r.status_code == 200
 
-    db.refresh(admin)
+    # 改密由 HTTP 请求（另一个 session）提交，本会话需先结束快照事务才能读到最新值
+    refresh()
     assert admin.must_change_password is False
 
 
@@ -385,23 +377,14 @@ def test_require_admin_allows_admin(client, admin_token):
     assert r.json()["data"]["role"] == "admin"
 
 
-def test_admin_must_change_password_blocks_other_apis(client, db, login):
-    """admin 未改密前访问业务接口 403（PRD 5.1）。"""
-    from app.models.entities import User
-    from app.utils.security import hash_password
+def test_admin_must_change_password_blocks_other_apis(client, db, login, admin_pending_change):
+    """admin 未改密前访问业务接口 403（PRD 5.1）。
 
-    admin = Repo(db).get_user_by_username("admin")
-    if admin is None:
-        admin = User(username="admin", password_hash=hash_password("x"), role=ROLE_ADMIN)
-        db.add(admin)
-        db.commit()
-        db.refresh(admin)
+    用**独立的测试 admin 账号**，不要改真实 admin 的密码。
+    """
+    admin, password = admin_pending_change
 
-    admin.password_hash = hash_password("firstpass1")
-    admin.must_change_password = True
-    db.commit()
-
-    token = login("admin", "firstpass1")
+    token = login(admin.username, password)
 
     session = SessionLocal()
     try:

@@ -24,7 +24,7 @@ def post(client, path, body=None, token=None):
 
 
 @pytest.fixture
-def bind_setup(db, make_user, refresh, uname):
+def bind_setup(db, make_user, refresh, uname, uniq):
     """(家长, 密码, 学生1, 学生2) —— 学生带唯一绑定码与初始积分。
 
     绑定码必须逐用例唯一：「只增不删」下固定码会被历史用例的学生占用，
@@ -32,8 +32,8 @@ def bind_setup(db, make_user, refresh, uname):
     """
     parent, ppw = make_user(ROLE_PARENT, "par")
     # bind_code 字段为 VARCHAR(8)，需控制在 8 位内
-    s1, _ = make_user(ROLE_STUDENT, "ch1", bind_code=uname("C1").upper()[:8], total_points=100)
-    s2, _ = make_user(ROLE_STUDENT, "ch2", bind_code=uname("C2").upper()[:8], total_points=50)
+    s1, _ = make_user(ROLE_STUDENT, "ch1", bind_code=uniq("C1").upper()[:8], total_points=100)
+    s2, _ = make_user(ROLE_STUDENT, "ch2", bind_code=uniq("C2").upper()[:8], total_points=50)
     refresh()
     return parent, ppw, s1, s2
 

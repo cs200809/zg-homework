@@ -173,14 +173,17 @@ def test_generated_code_can_register_teacher(client, admin_token, uname):
 
 def test_invite_actions_written_to_admin_log(client, admin_token, db):
     """敏感操作写审计日志（PRD 10.1）。"""
-    admin = Repo(db).get_user_by_username("admin")
+    from app.utils.deps import decode_access_token
+
+    # 审计日志记的是实际操作者（临时 admin 账号），不是真实 admin。
+    actor_id = decode_access_token(admin_token)["user_id"]
     admin_post(client, "/admin/invite/create", {"count": 1}, token=admin_token)
 
     from app.models.entities import AdminLog
     from sqlalchemy import select
 
     logs = db.scalars(
-        select(AdminLog).where(AdminLog.admin_id == admin.id, AdminLog.action == "invite_create")
+        select(AdminLog).where(AdminLog.admin_id == actor_id, AdminLog.action == "invite_create")
     ).all()
     assert len(logs) >= 1
 
@@ -208,8 +211,12 @@ def test_admin_can_enable_each_role(client, admin_token, make_user, role):
 
 def test_admin_cannot_disable_admin_itself(client, admin_token, db):
     """admin 无法禁用自己，返回 400（PRD 5.8.2、第 12 节验收）。"""
-    admin = Repo(db).get_user_by_username("admin")
-    r = admin_post(client, "/admin/users/disable", {"user_id": admin.id}, token=admin_token)
+    from app.utils.deps import decode_access_token
+
+    # 禁用「操作者自己」——即 admin_token 对应的那��� admin 账号。
+    # 不是真实 admin：测试不应把真实 admin 卷进来。
+    actor_id = decode_access_token(admin_token)["user_id"]
+    r = admin_post(client, "/admin/users/disable", {"user_id": actor_id}, token=admin_token)
     assert r.status_code == 400
     assert "不可操作 admin" in r.json()["message"]
 
@@ -401,8 +408,13 @@ def test_users_detail_nonexistent(client, admin_token):
 
 def test_user_actions_written_to_admin_log(client, admin_token, db, refresh, make_user):
     """禁用/启用/重置密码写审计日志（PRD 10.1）。"""
+    from app.utils.deps import decode_access_token
+
     target, _ = make_user(ROLE_STUDENT, "lg")
-    admin = Repo(db).get_user_by_username("admin")
+    # 审计日志记的是**实际操作者**。admin_token 夹具用的是独立的临时 admin
+    # 账号（不再覆盖真实 admin 的密码），因此要从 token 里取操作者 id，
+    # 而不能想当然地假设是真实 admin。
+    actor_id = decode_access_token(admin_token)["user_id"]
 
     admin_post(client, "/admin/users/disable", {"user_id": target.id}, token=admin_token)
     admin_post(client, "/admin/users/enable", {"user_id": target.id}, token=admin_token)
@@ -416,7 +428,7 @@ def test_user_actions_written_to_admin_log(client, admin_token, db, refresh, mak
     actions = set(
         db.scalars(
             select(AdminLog.action).where(
-                AdminLog.admin_id == admin.id,
+                AdminLog.admin_id == actor_id,
                 AdminLog.target_id == target.id,
             )
         ).all()
