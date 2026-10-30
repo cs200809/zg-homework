@@ -1,19 +1,35 @@
 /** admin 文章管理（PRD 5.8.4、9 admin 端）。 */
 
 import { useCallback, useEffect, useState } from 'react'
-import { App, Button, Card, Input, Popconfirm, Select, Table, Tag } from 'antd'
+import {
+  App,
+  Button,
+  Card,
+  Form,
+  Input,
+  Modal,
+  Popconfirm,
+  Select,
+  Table,
+  Tag,
+  Upload,
+} from 'antd'
 
+import { fileUrl } from '../../api/client'
 import { articleApi } from '../../api/student'
 import type { Article } from '../../api/types'
 
 export default function AdminArticles() {
   const { message } = App.useApp()
+  const [form] = Form.useForm()
   const [rows, setRows] = useState<Article[]>([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
   const [status, setStatus] = useState<string | undefined>()
   const [keyword, setKeyword] = useState('')
   const [loading, setLoading] = useState(true)
+  const [creating, setCreating] = useState(false)
+  const [fileList, setFileList] = useState<File[]>([])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -50,11 +66,36 @@ export default function AdminArticles() {
     }
   }
 
+  async function onCreate(values: { title: string; content?: string }) {
+    try {
+      await articleApi.createFile(values.title, values.content ?? '', fileList[0] ?? null)
+      message.success('文章发布成功')
+      form.resetFields()
+      setFileList([])
+      setCreating(false)
+      await load()
+    } catch (e) {
+      message.error(e instanceof Error ? e.message : '发布失败')
+    }
+  }
+
+  async function onExportPdf(a: Article) {
+    try {
+      const r = await articleApi.exportPdf(a.id)
+      window.open(fileUrl(r.file_url), '_blank')
+    } catch (e) {
+      message.error(e instanceof Error ? e.message : '导出失败')
+    }
+  }
+
   return (
     <Card
       title="文章管理（全量）"
       extra={
         <span style={{ display: 'inline-flex', gap: 8 }}>
+          <Button type="primary" onClick={() => setCreating(true)}>
+            发布文章
+          </Button>
           <Select
             allowClear
             placeholder="全部状态"
@@ -123,22 +164,68 @@ export default function AdminArticles() {
           },
           {
             title: '操作',
-            width: 100,
+            width: 180,
             render: (_: unknown, r) => (
-              <Popconfirm
-                title="确认删除该文章？"
-                onConfirm={() => onDelete(r)}
-                okText="确认"
-                cancelText="取消"
-              >
-                <Button size="small" danger>
-                  删除
+              <>
+                <Button size="small" onClick={() => onExportPdf(r)}>
+                  导出 PDF
                 </Button>
-              </Popconfirm>
+                <Popconfirm
+                  title="确认删除该文章？"
+                  onConfirm={() => onDelete(r)}
+                  okText="确认"
+                  cancelText="取消"
+                >
+                  <Button size="small" danger style={{ marginLeft: 8 }}>
+                    删除
+                  </Button>
+                </Popconfirm>
+              </>
             ),
           },
         ]}
       />
+
+      <Modal
+        title="发布文章"
+        open={creating}
+        onCancel={() => setCreating(false)}
+        onOk={() => form.submit()}
+        okText="发布"
+        cancelText="取消"
+        width={640}
+      >
+        <Form form={form} layout="vertical" onFinish={onCreate}>
+          <Form.Item name="title" label="标题" rules={[{ required: true, message: '请输入标题' }]}>
+            <Input placeholder="文章标题" />
+          </Form.Item>
+          <Form.Item
+            name="content"
+            label="正文"
+            extra="纯文本可直接填写；上传 PDF / Word 时服务端会自动抽取正文，二选一即可"
+          >
+            <Input.TextArea rows={10} placeholder="文章正文内容" />
+          </Form.Item>
+          <Form.Item label="文章文件（可选，支持 PDF / Word）">
+            <Upload
+              accept=".pdf,.docx"
+              maxCount={1}
+              beforeUpload={(f) => {
+                setFileList([f])
+                return false
+              }}
+              onRemove={() => setFileList([])}
+              fileList={fileList.map((f) => ({
+                uid: f.name,
+                name: f.name,
+                status: 'done' as const,
+              }))}
+            >
+              <Button>选择文件</Button>
+            </Upload>
+          </Form.Item>
+        </Form>
+      </Modal>
     </Card>
   )
 }

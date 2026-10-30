@@ -1,10 +1,12 @@
 /** 学生端接口：签到、阅读、游戏、积分（PRD 5.4、5.5、5.6）。 */
 
-import { post } from './client'
+import { client, post } from './client'
+import type { ApiResponse } from './client'
 import type { PageResult } from './classes'
 import type {
   Article,
   ArticleStats,
+  ExportPdfResult,
   GameRecord,
   IdiomQuestionView,
   PointLog,
@@ -115,6 +117,40 @@ export const articleApi = {
       content,
       ...(cover ? { cover } : {}),
     }),
+
+  /**
+   * 发布文章（支持纯文本 / PDF / word 文档）—— teacher / admin（迭代 v2.1）。
+   * 有文件时走 multipart 的 /articles/create-file，服务端抽取正文入库。
+   */
+  createFile: async (
+    title: string,
+    content: string,
+    file: File | null,
+    cover?: string,
+  ): Promise<{ article: Article }> => {
+    const form = new FormData()
+    form.append('title', title)
+    if (content) form.append('content', content)
+    if (cover) form.append('cover', cover)
+    if (file) form.append('file', file)
+
+    const res = await client.post<ApiResponse<{ article: Article }>>(
+      '/articles/create-file',
+      form,
+      { headers: { 'Content-Type': 'multipart/form-data' } },
+    )
+    const body = res.data
+    if (body.code !== 0) {
+      const err = new Error(body.message) as Error & { code?: number }
+      err.code = body.code
+      throw err
+    }
+    return body.data
+  },
+
+  /** 导出文章为 PDF（迭代 v2.1）：服务端生成，返回可访问的相对路径 */
+  exportPdf: (articleId: number) =>
+    post<ExportPdfResult>('/articles/export-pdf', { article_id: articleId }),
 }
 
 // ---------- 游戏（PRD 5.6） ----------

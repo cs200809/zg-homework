@@ -1,6 +1,7 @@
 /// 老师端：班级 / 作业 / 文章（PRD 5.2、5.3、5.5、9 老师端，移动精简版）。
 library;
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
 import '../../core/api_client.dart';
@@ -127,6 +128,18 @@ class _ClassesPanelState extends State<_ClassesPanel> {
     }
   }
 
+  /// 重新生成班级邀请码（迭代 v2.1）
+  Future<void> _regenerateInvite(int classId) async {
+    try {
+      final r = await TeacherApi.instance.regenerateClassInvite(classId);
+      if (!mounted) return;
+      showSnack(context, '新的邀请码：${r['invite_code']}');
+      await _load();
+    } catch (e) {
+      if (mounted) showSnack(context, errorMessage(e), error: true);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -155,7 +168,17 @@ class _ClassesPanelState extends State<_ClassesPanel> {
                       subtitle: Text(
                         '邀请码：${c['invite_code']} · 学生 ${c['student_count'] ?? 0} 人',
                       ),
-                      trailing: const Icon(Icons.chevron_right),
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          IconButton(
+                            tooltip: '重新生成邀请码',
+                            icon: const Icon(Icons.autorenew),
+                            onPressed: () => _regenerateInvite(c['id'] as int),
+                          ),
+                          const Icon(Icons.chevron_right),
+                        ],
+                      ),
                       onTap: () async {
                         await Navigator.of(context).push(
                           MaterialPageRoute(
@@ -221,6 +244,17 @@ class _ClassStudentsPageState extends State<_ClassStudentsPage> {
     }
   }
 
+  /// 重新生成学生绑定码（迭代 v2.1）
+  Future<void> _regenerateBindCode(int studentId) async {
+    try {
+      final r = await TeacherApi.instance.regenerateBindCode(studentId);
+      if (!mounted) return;
+      showSnack(context, '新的绑定码：${r['bind_code']}');
+    } catch (e) {
+      if (mounted) showSnack(context, errorMessage(e), error: true);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -245,6 +279,11 @@ class _ClassStudentsPageState extends State<_ClassStudentsPage> {
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         Chip(label: Text('${s['total_points']} 分')),
+                        IconButton(
+                          tooltip: '重新生成绑定码',
+                          icon: const Icon(Icons.qr_code_2),
+                          onPressed: () => _regenerateBindCode(s['id'] as int),
+                        ),
                         IconButton(
                           icon: Icon(Icons.person_remove, color: Colors.red.shade600),
                           onPressed: () => _remove(s['id'] as int),
@@ -599,31 +638,55 @@ class _ArticlesPanelState extends State<_ArticlesPanel> {
   Future<void> _create() async {
     final title = TextEditingController();
     final content = TextEditingController();
+    String? filePath;
+
     final ok = await showDialog<bool>(
       context: context,
-      builder: (c) => AlertDialog(
-        title: const Text('发布文章'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(controller: title, decoration: const InputDecoration(labelText: '标题')),
-            const SizedBox(height: 12),
-            TextField(
-              controller: content,
-              maxLines: 6,
-              decoration: const InputDecoration(labelText: '正文'),
-            ),
+      builder: (c) => StatefulBuilder(
+        builder: (c, setState) => AlertDialog(
+          title: const Text('发布文章'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(controller: title, decoration: const InputDecoration(labelText: '标题')),
+              const SizedBox(height: 12),
+              TextField(
+                controller: content,
+                maxLines: 6,
+                decoration: const InputDecoration(
+                  labelText: '正文',
+                  helperText: '可留空，改为上传 PDF / Word',
+                ),
+              ),
+              const SizedBox(height: 12),
+              OutlinedButton.icon(
+                onPressed: () async {
+                  final res = await FilePicker.platform.pickFiles(
+                    type: FileType.custom,
+                    allowedExtensions: const ['pdf', 'docx'],
+                  );
+                  final p = res?.files.single.path;
+                  if (p != null) setState(() => filePath = p);
+                },
+                icon: const Icon(Icons.attach_file),
+                label: Text(filePath == null ? '选择 PDF / Word（可选）' : '已选择文件'),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('取消')),
+            FilledButton(onPressed: () => Navigator.pop(c, true), child: const Text('发布')),
           ],
         ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('取消')),
-          FilledButton(onPressed: () => Navigator.pop(c, true), child: const Text('发布')),
-        ],
       ),
     );
     if (ok == true && title.text.trim().isNotEmpty) {
       try {
-        await TeacherApi.instance.createArticle(title.text.trim(), content.text.trim());
+        await TeacherApi.instance.createArticle(
+          title.text.trim(),
+          content.text.trim(),
+          filePath: filePath,
+        );
         if (mounted) showSnack(context, '发布成功');
         await _load();
       } catch (e) {

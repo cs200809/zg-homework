@@ -27,6 +27,11 @@ pydantic-settings==2.7.0
 # 缓存 / 限流：MVP 用内存，规模化换 redis
 # redis==5.2.1
 
+# --- 文档处理（迭代 v2.1：文章支持 PDF / word 发布与导出 PDF）---
+pypdf==5.1.0
+python-docx==1.1.2
+reportlab==4.2.5
+
 # --- 测试 ---
 pytest==8.3.4
 httpx==0.28.1

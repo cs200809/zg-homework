@@ -95,8 +95,15 @@ class ApiClient {
     return (payload.data ?? {}) as Json;
   }
 
-  /// multipart 上传（作业文件，PRD 5.3）
-  Future<Json> postMultipart(String path, Map<String, String> fields) async {
+  /// multipart 上传（PRD 5.3、迭代 v2.1：支持文件附件）
+  ///
+  /// [fields] 为普通文本字段；[file] 为可选文件附件，
+  /// 附件的表单字段名由 [http.MultipartFile] 自身的 `field` 决定。
+  Future<Json> postMultipart(
+    String path,
+    Map<String, String> fields, {
+    http.MultipartFile? file,
+  }) async {
     final uri = Uri.parse('$_baseUrl$path');
 
     try {
@@ -105,6 +112,9 @@ class ApiClient {
         req.headers['Authorization'] = 'Bearer $_token';
       }
       fields.forEach((k, v) => req.fields[k] = v);
+      if (file != null) {
+        req.files.add(file);
+      }
 
       final streamed = await req.send().timeout(AppConfig.timeout);
       final res = await http.Response.fromStream(streamed);

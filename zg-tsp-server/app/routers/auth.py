@@ -3,8 +3,6 @@
 全 POST + Body，URL 不携带业务参数。
 """
 
-import secrets
-import string
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -14,11 +12,12 @@ from app.db.repo import Repo
 from app.db.session import get_db
 from app.models.constants import (
     INVITE_UNUSED,
+    ROLE_PARENT,
     ROLE_STUDENT,
     ROLE_TEACHER,
     STATUS_ACTIVE,
 )
-from app.models.entities import User
+from app.models.entities import ParentStudent, User
 from app.schemas.auth import (
     ChangePasswordRequest,
     LoginRequest,
@@ -26,6 +25,7 @@ from app.schemas.auth import (
     RegisterRequest,
     UserInfo,
 )
+from app.utils.codes import gen_bind_code
 from app.utils.deps import get_current_user
 from app.utils.response import CODE_BAD_REQUEST, CODE_FORBIDDEN, CODE_NOT_FOUND, ok
 from app.utils.security import (
@@ -65,17 +65,25 @@ def _to_user_info(user: User) -> UserInfo:
 
 def _gen_bind_code() -> str:
     """生成学生绑定码（家长绑定用），8 位。"""
-    alphabet = string.ascii_uppercase + string.digits
-    return "".join(secrets.choice(alphabet) for _ in range(8))
+    return gen_bind_code()
 
 
 @router.post("/register")
 async def register(req: RegisterRequest, db: Session = Depends(get_db)):
-    """注册。学生/家长/老师；老师必须携带有效邀请码（PRD 5.1）。"""
+    """注册。学生/家长/老师（PRD 5.1、迭代 v2.1）。
+
+    - 老师：老师邀请码，**一码一用**
+    - 学生：班级邀请码，**多学生可用**，注册后自动入班
+    - 家长：学生绑定码，**多家长可用**，注册后自动绑定
+    """
     repo = Repo(db)
 
     if repo.get_user_by_username(req.username):
         raise _bad_request("用户名已存在")
+
+    klass = None
+    student = None
+    invite = None
 
     # 老师：校验邀请码（存在 / 未使用 / 未过期）
     if req.role == ROLE_TEACHER:
@@ -92,21 +100,42 @@ async def register(req: RegisterRequest, db: Session = Depends(get_db)):
         else:
             raise _bad_request(f"邀请码不可用（状态：{invite.status}）")
 
+    # 学生：班级邀请码（多学生可用，不消耗）
+    elif req.role == ROLE_STUDENT:
+        if not req.class_invite_code:
+            raise _bad_request("学生注册必须携带班级邀请码")
+        klass = repo.get_class_by_invite_code(req.class_invite_code.strip().upper())
+        if not klass:
+            raise _bad_request("班级邀请码不存在")
+
+    # 家长：学生绑定码（多家长可用，不消耗）
+    elif req.role == ROLE_PARENT:
+        if not req.bind_code:
+            raise _bad_request("家长注册必须携带学生绑定码")
+        student = repo.get_user_by_bind_code(req.bind_code.strip())
+        if not student:
+            raise _bad_request("学生绑定码不存在")
+
     created = repo.add_user(
         User(
             username=req.username,
             password_hash=hash_password(req.password),
             role=req.role,
             nickname=req.nickname or req.username,
-            bind_code=_gen_bind_code() if req.role == ROLE_STUDENT else None,
+            class_id=klass.id if klass else None,
+            bind_code=gen_bind_code() if req.role == ROLE_STUDENT else None,
         )
     )
 
-    # 一码一用：标记邀请码已使用
-    if req.role == ROLE_TEACHER:
+    # 一码一用：标记老师邀请码已使用
+    if invite is not None:
         invite.status = "used"
         invite.used_by_user_id = created.id
         invite.used_at = datetime.now()
+
+    # 家长注册即绑定学生（多家长可用）
+    if student is not None:
+        repo.add_parent_student(ParentStudent(parent_id=created.id, student_id=student.id))
 
     db.commit()
     db.refresh(created)

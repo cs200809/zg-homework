@@ -1,9 +1,45 @@
-# 学校兴趣培养积分系统 — 完整 PRD（v2.0）
+# 学校兴趣培养积分系统 — 完整 PRD（v2.1）
 
-> 版本：v2.0（合并 admin 模块与权限扩展）  
+> 版本：v2.1（迭代：手机号注册 / 班级码与绑定码重生成 / 阅读文档能力）  
 > 技术栈：React + Ant Design 前端 / Python FastAPI 后端 / JWT 认证  
 > 接口约定：**全部使用 POST，参数走 Body**，避免 URL 信息泄露  
 > 文档目的：作为 LLM 直接开发项目的唯一依据
+
+---
+
+## 0. 变更记录
+
+### v2.1（迭代：注册 / 班级码 / 阅读文档能力）
+
+**来源**：`sys_doc/迭代.md`
+
+| # | 变更项 | 说明 |
+|---|--------|------|
+| 1 | 注册用户名改为手机号 | 格式 `^1[3-9]\d{9}$`，并校验唯一性（PRD 5.1） |
+| 2 | 学生注册带**班级邀请码** | 注册时校验班级邀请码存在，注册后**自动加入班级**。班级邀请码**多学生可用**（班级属性），老师 / admin 可重新生成，旧码立即失效，已入班学生不受影响 |
+| 3 | 家长注册带**学生绑定码** | 注册时校验绑定码存在，注册后**自动绑定学生**。学生绑定码**多家长可用**（学生属性），admin / 老师可重新生成，旧码立即失效，已建立的家长关系不受影响 |
+| 4 | 老师邀请码维持一码一用 | 注册时消耗，`status=used`（不变） |
+| 5 | admin / 老师可重新生成班级邀请码 | 新增 `POST /classes/regenerate-invite` |
+| 6 | admin / 老师可重新生成学生绑定码 | 新增 `POST /classes/regenerate-bind-code` |
+| 7 | 学生端可查看绑定码 | 服务端 `/auth/me` 已返回 `bind_code`；Web 新增学生端「我的」页，移动端「我的」页已有 |
+| 8 | 发布文章支持纯文本 / PDF / word | 新增 `POST /articles/create-file`（multipart），服务端抽取正文入库；`articles` 表新增 `file_url` / `file_name` / `file_type` |
+| 9 | 阅读文章支持导出 PDF | 新增 `POST /articles/export-pdf`，服务端用 reportlab 排版（内置中文 CID 字体 `STSong-Light`） |
+| 10 | 阅读时只读不可编辑 | 学生端无任何编辑入口，正文只读渲染（已在 Web / 移动端落实，并加只读标识） |
+| 11 | 登录后可自助修改当前账户密码 | `POST /auth/change-password` 已实现；本迭代在 Web（右上角菜单 / 学生端「我的」页）与移动端补充入口 |
+| 12 | 修复上传文件无法访问 | `app/main.py` 新增 `StaticFiles("/uploads")` 挂载（此前 `/uploads/<name>` 无对应路由，作业附件与导出文件实际 404） |
+
+> **本版本未覆盖的既有缺口（非本次迭代范围，遗留待办）**
+> - 5.8.4 列出的 `POST /admin/articles/{list,detail,update,toggle,stats}` 六个端点**服务端仍未实现**；
+>   admin 端的文章管理当前走 `/articles/*` 既有路由 + 前端筛选。
+> - 5.6 提出的「数独游戏规则说明」尚未在移动端数独页内呈现。
+
+> **口径澄清**：`迭代.md` 中「班级邀请码 / 学生绑定码一码一用」与 PRD 5.2「一个班级多个学生加入」、5.7「家长可绑多个孩子」冲突。
+> 本版本按 **班级邀请码多学生可用 / 学生绑定码多家长可用** 实现；「一次性」语义落在
+> **可随时重新生成、旧码立即失效** 上。
+
+### v2.0
+
+初始版本（合并 admin 模块与权限扩展）。
 
 ---
 
@@ -302,6 +338,9 @@ CREATE TABLE articles
     title        VARCHAR(100) NOT NULL,
     cover        VARCHAR(255),
     content      TEXT         NOT NULL,
+    file_url     VARCHAR(255),                    -- 原始上传文件路径（迭代 v2.1）
+    file_name    VARCHAR(255),                    -- 原始文件名（迭代 v2.1）
+    file_type    VARCHAR(20),                     -- 原始文件类型 pdf/docx（迭代 v2.1）
     status       VARCHAR(10) DEFAULT 'published', -- published/hidden
     created_at   DATETIME    DEFAULT CURRENT_TIMESTAMP,
     updated_at   DATETIME
@@ -399,6 +438,9 @@ CREATE TABLE idiom_questions
 **索引**：`point_logs(student_id, log_date)`、`homework_records(student_id)`、`users(class_id)`、
 `teacher_invite_codes(code/status)`、`point_rules(rule_key)`、`idiom_questions(enabled)`
 
+> **迁移**：本仓库无 Alembic，`create_all()` 只建缺失的表、**不修改已有表结构**。
+> 新增列由 `python -m app.seed.migrate_v21` 显式 `ALTER`（幂等，可重复执行）。
+
 ### 4.2 积分规则种子数据
 
 | rule_key           | rule_name | points | daily_limit | extra_config                  |
@@ -424,9 +466,12 @@ CREATE TABLE idiom_questions
 
 **注册**
 
-- 学生：用户名+密码+角色 → 注册后输班级邀请码加入
-- 家长：用户名+密码+角色 → 注册后输学生绑定码
-- 老师：用户名+密码+角色+**老师邀请码**（必填，校验存在/未用/未过期，一码一用）
+- 用户名：**手机号**（`^1[3-9]\d{9}$`，校验格式与唯一性）
+- 老师：用户名+密码+角色+**老师邀请码**（必填，校验存在/未用/未过期，**一码一用**）
+- 学生：用户名+密码+角色+**班级邀请码**（必填，校验存在）→ 注册后自动加入班级
+  - 班级邀请码**多学生可用**（班级属性，非一次性）；老师 / admin 可重新生成，旧码立即失效，已入班学生不受影响
+- 家长：用户名+密码+角色+**学生绑定码**（必填，校验存在）→ 注册后自动绑定学生
+  - 学生绑定码**多家长可用**（学生属性）；admin / 老师可重新生成，旧码立即失效，已建立的家长关系不受影响
 - admin：不开放注册，种子初始化（`ADMIN_INIT_PASSWORD` 环境变量，缺省随机打印日志）
 
 **登录**
@@ -434,6 +479,7 @@ CREATE TABLE idiom_questions
 - 用户名+密码 → JWT（含 user_id、role）
 - admin 首次登录返回 `must_change_password: true`，未改密前其他接口 403
 - 被禁用用户登录返回 403
+- 登录之后可以自行修改当前账户密码
 
 **规则**
 
@@ -443,7 +489,7 @@ CREATE TABLE idiom_questions
 **接口**
 
 ```
-POST /auth/register        {username, password, role, nickname, teacher_invite_code?}
+POST /auth/register        {username, password, role, nickname, teacher_invite_code?, class_invite_code?, bind_code?}
 POST /auth/login           {username, password} → {token, user, must_change_password?}
 POST /auth/me              {}
 POST /auth/change-password {old_password, new_password}
@@ -456,13 +502,25 @@ POST /auth/change-password {old_password, new_password}
 - 老师创建班级（名称），生成 6 位邀请码
 - 学生凭邀请码加入（一个学生只属一个班级）
 - 老师查看班级学生、移除学生
+- admin/老师 可看班级邀请码，且可以重新生成班级邀请码
+- 学生端可查看绑定码
+- admin/老师可重新生成学生绑定码
+
+> **码的复用语义（v2.1 澄清）**
+> - **班级邀请码**：班级属性，**多学生可用**，注册时校验存在即入班，不消耗、不失效；
+>   老师 / admin 可重新生成，**旧码立即失效**，已加入该班的学生**不受影响**。
+> - **学生绑定码**：学生属性，**多家长可用**，注册时校验存在即绑定，不消耗、不失效；
+>   admin / 老师可重新生成，**旧码立即失效**，已建立的家长关系**不受影响**。
+> - **老师邀请码**：**一码一用**，注册时消耗（`status=used`），此规则不变。
 
 ```
-POST /classes/create         {name}                          teacher
-POST /classes/join           {invite_code}                   student
-POST /classes/my             {}                              teacher/student
-POST /classes/students       {class_id}                      teacher
-POST /classes/remove-student {class_id, student_id}          teacher
+POST /classes/create             {name}                          teacher
+POST /classes/join               {invite_code}                   student
+POST /classes/my                 {}                              teacher/student
+POST /classes/students           {class_id}                      teacher
+POST /classes/remove-student     {class_id, student_id}          teacher
+POST /classes/regenerate-invite   {class_id}                     teacher(admin 任意班级)
+POST /classes/regenerate-bind-code {student_id}                  teacher(admin 任意学生)
 ```
 
 ---
@@ -526,6 +584,18 @@ POST /points/summary  {}                                  student
 - 进入页面计时，失焦暂停
 - 每 30 秒心跳上报，后端校验间隔 30s±10s，异常不计时
 - 滚动到底标记读完
+- 阅读文章支持导出 PDF 文件
+- 发布阅读文章支持纯文本/PDF/word文档
+- 阅读时只读，不可编辑
+
+**发布与导出（v2.1）**
+
+- 发布支持纯文本 / PDF / word 文档：上传文件由服务端抽取正文入库（原文件保留，
+  `articles.file_url` / `file_name` / `file_type`），学生端读到的仍是**文本**（天然只读）
+- 阅读文章支持导出 PDF：服务端用 reportlab 排版（内置中文 CID 字体 `STSong-Light`，
+  无需外部字体文件），生成的 PDF 存 `uploads/` 并返回可下载地址
+- 阅读时只读，不可编辑（学生端无任何编辑入口）
+- 上传与导出的文件通过 `GET /uploads/<name>` 访问（静态挂载，非业务接口）
 
 **积分**（读规则表）
 
@@ -533,13 +603,15 @@ POST /points/summary  {}                                  student
 - 读完 +5，单篇 1 次
 
 ```
-POST /articles/create    {title, cover, content}          teacher/admin
-POST /articles/list      {page, size}                     all（仅 published）
-POST /articles/detail    {article_id}                     all
-POST /articles/heartbeat {article_id, seconds}            student
-POST /articles/finish    {article_id}                     student
-POST /articles/records   {article_id}                     teacher
-POST /articles/delete    {article_id}                     teacher（仅自己）
+POST /articles/create     {title, cover, content}          teacher/admin
+POST /articles/create-file multipart: title, cover?, content?, file?   teacher/admin
+POST /articles/list       {page, size}                     all（仅 published）
+POST /articles/detail     {article_id}                     all
+POST /articles/heartbeat  {article_id, seconds}            student
+POST /articles/finish     {article_id}                     student
+POST /articles/records    {article_id}                     teacher
+POST /articles/delete     {article_id}                     teacher（仅自己）
+POST /articles/export-pdf {article_id}                     all（学生仅 published）
 ```
 
 ---
@@ -549,6 +621,7 @@ POST /articles/delete    {article_id}                     teacher（仅自己）
 **数独**：难度分级，计时，完成提交按难度给分（规则表）
 
 - 题库由**服务端内置生成算法**按难度实时生成，无需预置题库
+- 数独游戏，增加游戏规则说明
 
 **成语接龙**：60 秒限时闯关，答对 +1/题
 
@@ -712,6 +785,8 @@ POST /classes/join
 POST /classes/my
 POST /classes/students
 POST /classes/remove-student
+POST /classes/regenerate-invite
+POST /classes/regenerate-bind-code
 
 # 作业
 POST /homework/create
@@ -734,12 +809,14 @@ POST /points/summary
 
 # 阅读
 POST /articles/create
+POST /articles/create-file
 POST /articles/list
 POST /articles/detail
 POST /articles/heartbeat
 POST /articles/finish
 POST /articles/records
 POST /articles/delete
+POST /articles/export-pdf
 
 # 游戏
 POST /games/sudoku/start
@@ -810,6 +887,10 @@ POST /health
 | 签到/交作业/阅读/游戏                 | ❌     | ❌       | ✅       | ❌       |
 | 查看排行榜                        | 只读    | 只读      | 只读      | ❌       |
 | 积分消耗                         | ❌     | ❌       | ❌       | ✅（绑定孩子） |
+| 重新生成班级邀请码                  | ✅     | ✅（自己班级） | ❌       | ❌       |
+| 重新生成学生绑定码                  | ✅     | ✅（本班学生） | ❌       | ❌       |
+| 发布文章（纯文本/PDF/word）         | ✅     | ✅       | ❌       | ❌       |
+| 导出文章 PDF                      | ✅     | ✅       | ✅      | ❌       |
 
 > admin 不参与业务（不签到、不布置作业），不计入排行榜。
 
@@ -843,10 +924,11 @@ POST /health
 
 - 首页：签到、今日积分、今日作业、排行榜入口
 - 作业列表 / 详情（开始写作业、上传提交）
-- 阅读列表 / 详情（计时、心跳、读完标记）
+- 阅读列表 / 详情（计时、心跳、读完标记、导出 PDF、只读）
 - 游戏中心 / 数独 / 成语接龙
 - 排行榜（日榜 / 总榜）
 - 我的积分明细
+- 我的（查看**绑定码**、所属班级、改密入口）
 - 首次使用：加入班级页
 
 ### 9.3 家长端（移动端 + Web 端均提供）
@@ -857,10 +939,10 @@ POST /health
 
 ### 9.4 老师端（移动端 + Web 端均提供）
 
-- 我的班级 / 班级学生列表
+- 我的班级 / 班级学生列表（可重新生成班级邀请码 / 学生绑定码）
 - 布置作业
 - 作业完成情况（学生、状态、开始时间、提交时间、用时、积分）
-- 文章管理 / 发布 / 阅读记录
+- 文章管理 / 发布（纯文本 / PDF / word）/ 阅读记录 / 导出 PDF
 - 班级积分概览
 
 ### 9.5 admin 端（移动端 + Web 端均提供）
@@ -869,6 +951,7 @@ POST /health
 - 用户管理（全角色筛选、禁用 / 启用、重置密码；admin 行按钮置灰）
 - 积分规则管理（积分值、日上限、扩展配置 JSON、启用开关）
 - 文章管理（全量列表、编辑、上下架、删除、阅读统计）
+- 发布文章（纯文本 / PDF / word）、导出 PDF
 - 成语题库管理（批量导入 JSON / 文件、列表、编辑、启用开关、删除）
 - 班级总览
 - 数据概览（统计卡片）
@@ -899,7 +982,7 @@ POST /health
 - 禁用用户立即失效（查库）
 - admin 保护：用户操作接口先校验目标非 admin
 - 邀请码 12 位随机，注册限流 10 次/分钟/IP
-- 文件白名单 jpg/png/pdf ≤10MB
+- 文件白名单：作业 jpg/png/pdf ≤10MB；文章 pdf/docx ≤10MB（v2.1）
 - 敏感操作写 `admin_logs`
 
 ### 10.2 防刷
@@ -966,6 +1049,17 @@ POST /health
 - [ ] 敏感操作（禁用、规则修改、文章删除）有审计日志
 - [ ] 学生/家长端移动端可用
 - [ ] 全接口均为 POST，URL 不携带业务参数
+
+**迭代 v2.1（注册 / 班级码 / 阅读文档能力）**
+
+- [ ] 注册用户名必须是手机号，格式非法返回 400
+- [ ] 学生注册携带班级邀请码后自动入班；家长注册携带学生绑定码后自动绑定
+- [ ] 班级邀请码可被多个学生使用；学生绑定码可被多个家长使用
+- [ ] admin / 老师可重新生成班级邀请码与学生绑定码，旧码立即失效且已有关系不受影响
+- [ ] 学生端可查看自己的绑定码（Web 与移动端均提供入口）
+- [ ] 老师 / admin 可发布 PDF / word 文章，正文由服务端正确抽取
+- [ ] 文章可导出为 PDF 且文件可正常打开
+- [ ] 上传与导出的文件可通过 `/uploads/<name>` 访问
 
 **模块独立性**
 

@@ -3,6 +3,8 @@
 /// 全 POST + Body，参数不携带于 URL（PRD 3.1）。
 library;
 
+import 'package:http/http.dart' as http;
+
 import 'api_client.dart';
 import 'models.dart';
 
@@ -29,14 +31,22 @@ class AuthApi {
     required String role,
     String? nickname,
     String? teacherInviteCode,
+    String? classInviteCode,
+    String? bindCode,
   }) async {
     await ApiClient.instance.post('/auth/register', body: {
       'username': username,
       'password': password,
       'role': role,
       if (nickname != null && nickname.isNotEmpty) 'nickname': nickname,
+      // 老师：邀请码一码一用
       if (teacherInviteCode != null && teacherInviteCode.isNotEmpty)
         'teacher_invite_code': teacherInviteCode,
+      // 学生：班级邀请码（多学生可用），注册后自动入班
+      if (classInviteCode != null && classInviteCode.isNotEmpty)
+        'class_invite_code': classInviteCode,
+      // 家长：学生绑定码（多家长可用），注册后自动绑定
+      if (bindCode != null && bindCode.isNotEmpty) 'bind_code': bindCode,
     });
   }
 
@@ -104,6 +114,10 @@ class StudentApi {
 
   Future<Json> finishArticle(int id) =>
       ApiClient.instance.post('/articles/finish', body: {'article_id': id});
+
+  /// 导出文章为 PDF（迭代 v2.1）：服务端生成，返回可访问的相对路径
+  Future<Json> exportPdf(int articleId) =>
+      ApiClient.instance.post('/articles/export-pdf', body: {'article_id': articleId});
 
   // ---- 游戏（PRD 5.6） ----
   Future<Json> sudokuStart(String difficulty) =>
@@ -187,17 +201,41 @@ class TeacherApi {
   Future<Json> articleList({int page = 1, int size = 50}) =>
       ApiClient.instance.post('/articles/list', body: {'page': page, 'size': size});
 
-  Future<Json> createArticle(String title, String content) =>
-      ApiClient.instance.post('/articles/create', body: {
+  /// 发布文章（支持纯文本 / PDF / word，迭代 v2.1）
+  ///
+  /// [filePath] 为空时走纯文本接口；否则走 multipart 的 /articles/create-file，
+  /// 由服务端抽取正文入库。
+  Future<Json> createArticle(String title, String content, {String? filePath}) async {
+    if (filePath == null || filePath.isEmpty) {
+      return ApiClient.instance.post('/articles/create', body: {
         'title': title,
         'content': content,
       });
+    }
+    final file = await http.MultipartFile.fromPath('file', filePath);
+    return ApiClient.instance.postMultipart(
+      '/articles/create-file',
+      {
+        'title': title,
+        if (content.isNotEmpty) 'content': content,
+      },
+      file: file,
+    );
+  }
 
   Future<Json> deleteArticle(int id) =>
       ApiClient.instance.post('/articles/delete', body: {'article_id': id});
 
   Future<Json> articleRecords(int id) =>
       ApiClient.instance.post('/articles/records', body: {'article_id': id});
+
+  /// 重新生成班级邀请码（迭代 v2.1）
+  Future<Json> regenerateClassInvite(int classId) =>
+      ApiClient.instance.post('/classes/regenerate-invite', body: {'class_id': classId});
+
+  /// 重新生成学生绑定码（迭代 v2.1）
+  Future<Json> regenerateBindCode(int studentId) =>
+      ApiClient.instance.post('/classes/regenerate-bind-code', body: {'student_id': studentId});
 }
 
 class ParentApi {
@@ -305,14 +343,39 @@ class AdminApi {
         if (status != null) 'status': status,
       });
 
-  Future<Json> createArticle(String title, String content) =>
-      ApiClient.instance.post('/articles/create', body: {
+  /// 发布文章（支持纯文本 / PDF / word，迭代 v2.1）
+  Future<Json> createArticle(String title, String content, {String? filePath}) async {
+    if (filePath == null || filePath.isEmpty) {
+      return ApiClient.instance.post('/articles/create', body: {
         'title': title,
         'content': content,
       });
+    }
+    final file = await http.MultipartFile.fromPath('file', filePath);
+    return ApiClient.instance.postMultipart(
+      '/articles/create-file',
+      {
+        'title': title,
+        if (content.isNotEmpty) 'content': content,
+      },
+      file: file,
+    );
+  }
 
   Future<Json> deleteArticle(int id) =>
       ApiClient.instance.post('/articles/delete', body: {'article_id': id});
+
+  /// 导出文章为 PDF（迭代 v2.1）
+  Future<Json> exportPdf(int articleId) =>
+      ApiClient.instance.post('/articles/export-pdf', body: {'article_id': articleId});
+
+  /// 重新生成班级邀请码（迭代 v2.1）
+  Future<Json> regenerateClassInvite(int classId) =>
+      ApiClient.instance.post('/classes/regenerate-invite', body: {'class_id': classId});
+
+  /// 重新生成学生绑定码（迭代 v2.1）
+  Future<Json> regenerateBindCode(int studentId) =>
+      ApiClient.instance.post('/classes/regenerate-bind-code', body: {'student_id': studentId});
   // ---- 成语题库（PRD 5.8.6） ----
   Future<Json> idiomList({
     int page = 1,

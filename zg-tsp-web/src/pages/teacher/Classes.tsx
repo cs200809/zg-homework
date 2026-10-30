@@ -8,6 +8,7 @@ import {
   Form,
   Input,
   Popconfirm,
+  Space,
   Table,
   Tag,
   Typography,
@@ -89,6 +90,26 @@ export default function TeacherClasses() {
       .catch(() => message.warning(`复制失败，请手动记录：${code}`))
   }
 
+  async function onRegenerateInvite(klass: ClassInfo) {
+    try {
+      const r = await classApi.regenerateInvite(klass.id)
+      message.success(`新的邀请码：${r.invite_code}`)
+      await load()
+    } catch (e) {
+      message.error(e instanceof Error ? e.message : '重新生成失败')
+    }
+  }
+
+  async function onRegenerateBindCode(student: ClassStudent) {
+    try {
+      const r = await classApi.regenerateBindCode(student.id)
+      message.success(`${student.nickname || student.username} 的新绑定码：${r.bind_code}`)
+      if (current) await loadStudents(current)
+    } catch (e) {
+      message.error(e instanceof Error ? e.message : '重新生成失败')
+    }
+  }
+
   return (
     <div>
       <Card title="我的班级" loading={loading} style={{ marginBottom: 16 }}>
@@ -141,6 +162,27 @@ export default function TeacherClasses() {
                 width: 100,
                 render: (v: number | null) => v ?? 0,
               },
+              {
+                title: '操作',
+                width: 140,
+                render: (_: unknown, r: ClassInfo) => (
+                  <Popconfirm
+                    title="重新生成邀请码？"
+                    description="旧邀请码立即失效，已加入本班的学生不受影响。"
+                    okText="确认"
+                    cancelText="取消"
+                    onConfirm={() => onRegenerateInvite(r)}
+                  >
+                    <Button
+                      type="link"
+                      size="small"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      重新生成邀请码
+                    </Button>
+                  </Popconfirm>
+                ),
+              },
             ]}
           />
         )}
@@ -169,18 +211,31 @@ export default function TeacherClasses() {
               },
               {
                 title: '操作',
-                width: 100,
+                width: 200,
                 render: (_: unknown, r: ClassStudent) => (
-                  <Popconfirm
-                    title="确认移出该学生？"
-                    onConfirm={() => onRemove(r)}
-                    okText="确认"
-                    cancelText="取消"
-                  >
-                    <Button danger size="small">
-                      移出
-                    </Button>
-                  </Popconfirm>
+                  <Space>
+                    <Popconfirm
+                      title="重新生成绑定码？"
+                      description="旧绑定码立即失效，已绑定的家长不受影响。"
+                      okText="确认"
+                      cancelText="取消"
+                      onConfirm={() => onRegenerateBindCode(r)}
+                    >
+                      <Button type="link" size="small">
+                        重新生成绑定码
+                      </Button>
+                    </Popconfirm>
+                    <Popconfirm
+                      title="确认移出该学生？"
+                      onConfirm={() => onRemove(r)}
+                      okText="确认"
+                      cancelText="取消"
+                    >
+                      <Button danger size="small">
+                        移出
+                      </Button>
+                    </Popconfirm>
+                  </Space>
                 ),
               },
             ]}

@@ -42,6 +42,9 @@ class Settings(BaseSettings):
     upload_dir: str = str(BASE_DIR / "app" / "uploads")
     max_upload_mb: int = 10
     allowed_extensions: str = "jpg,jpeg,png,pdf"
+    # 文章上传（迭代 v2.1：支持 PDF / word）
+    article_allowed_extensions: str = "pdf,docx"
+    article_max_upload_mb: int = 10
 
     # --- 限流 ---
     register_rate_limit: int = 10
@@ -54,6 +57,15 @@ class Settings(BaseSettings):
     @property
     def allowed_extension_list(self) -> list[str]:
         return [e.strip().lower() for e in self.allowed_extensions.split(",") if e.strip()]
+
+    @property
+    def article_allowed_extension_list(self) -> list[str]:
+        """文章允许上传的扩展名（迭代 v2.1）。"""
+        return [
+            e.strip().lower()
+            for e in self.article_allowed_extensions.split(",")
+            if e.strip()
+        ]
 
 
 settings = Settings()

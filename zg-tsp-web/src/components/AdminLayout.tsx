@@ -37,6 +37,7 @@ const MENUS: Record<Role, NavItem[]> = {
     { key: '/student/games', label: '游戏', icon: <PlayCircleOutlined /> },
     { key: '/student/rank', label: '排行榜', icon: <TrophyOutlined /> },
     { key: '/student/points', label: '我的积分', icon: <WalletOutlined /> },
+    { key: '/student/profile', label: '我的', icon: <UserOutlined /> },
   ],
   teacher: [
     { key: '/teacher', label: '班级管理', icon: <TeamOutlined /> },
@@ -105,6 +106,12 @@ export default function AdminLayout() {
           <Dropdown
             menu={{
               items: [
+                {
+                  key: 'change-password',
+                  icon: <KeyOutlined />,
+                  label: '修改密码',
+                  onClick: () => navigate('/change-password'),
+                },
                 {
                   key: 'logout',
                   icon: <LogoutOutlined />,

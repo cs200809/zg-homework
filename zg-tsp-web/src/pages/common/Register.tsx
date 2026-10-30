@@ -1,4 +1,10 @@
-/** 注册页（PRD 5.1、9 公共）：选角色，选「老师」显示邀请码输入。 */
+/** 注册页（PRD 5.1、9 公共、迭代 v2.1）。
+ *
+ * 用户名必须是手机号；三类角色各自需要一枚码：
+ * - 老师：老师邀请码（一码一用）
+ * - 学生：班级邀请码（多学生可用，注册后自动入班）
+ * - 家长：学生绑定码（多家长可用，注册后自动绑定）
+ */
 
 import { useState } from 'react'
 import { Alert, Button, Card, Form, Input, Radio, Typography, App } from 'antd'
@@ -8,6 +14,28 @@ import { authApi } from '../../api/auth'
 import { ServiceUnavailableError } from '../../api/client'
 
 type Role = 'student' | 'parent' | 'teacher'
+
+/** 手机号格式（迭代 v2.1） */
+const PHONE_RE = /^1[3-9]\d{9}$/
+
+/** 各角色注册所需的码 */
+const CODE_FIELD = {
+  teacher: {
+    name: 'teacher_invite_code',
+    label: '老师邀请码',
+    placeholder: '向管理员申请获得',
+  },
+  student: {
+    name: 'class_invite_code',
+    label: '班级邀请码',
+    placeholder: '向老师索取班级邀请码',
+  },
+  parent: {
+    name: 'bind_code',
+    label: '学生绑定码',
+    placeholder: '让孩子在「我的」页面查看绑定码',
+  },
+} as const
 
 export default function RegisterPage() {
   const [form] = Form.useForm()
@@ -22,6 +50,8 @@ export default function RegisterPage() {
     password: string
     nickname?: string
     teacher_invite_code?: string
+    class_invite_code?: string
+    bind_code?: string
   }) {
     setError(null)
     setLoading(true)
@@ -32,6 +62,8 @@ export default function RegisterPage() {
         role,
         nickname: values.nickname,
         teacher_invite_code: role === 'teacher' ? values.teacher_invite_code : undefined,
+        class_invite_code: role === 'student' ? values.class_invite_code : undefined,
+        bind_code: role === 'parent' ? values.bind_code : undefined,
       })
       message.success('注册成功，请登录')
       navigate('/login')
@@ -45,6 +77,8 @@ export default function RegisterPage() {
       setLoading(false)
     }
   }
+
+  const code = CODE_FIELD[role]
 
   return (
     <div
@@ -66,8 +100,14 @@ export default function RegisterPage() {
             <Radio.Group
               value={role}
               onChange={(e) => {
-                setRole(e.target.value)
-                form.setFieldsValue({ teacher_invite_code: undefined })
+                const next = e.target.value as Role
+                setRole(next)
+                // 切换角色时清空上一角色的码
+                form.setFieldsValue({
+                  teacher_invite_code: undefined,
+                  class_invite_code: undefined,
+                  bind_code: undefined,
+                })
               }}
               options={[
                 { label: '学生', value: 'student' },
@@ -78,14 +118,14 @@ export default function RegisterPage() {
           </Form.Item>
 
           <Form.Item
-            label="用户名"
+            label="用户名（手机号）"
             name="username"
             rules={[
-              { required: true, message: '请输入用户名' },
-              { min: 3, max: 20, message: '用户名 3~20 位' },
+              { required: true, message: '请输入手机号' },
+              { pattern: PHONE_RE, message: '请输入正确的 11 位手机号' },
             ]}
           >
-            <Input placeholder="3~20 位，登录时使用" />
+            <Input placeholder="11 位手机号，登录时使用" maxLength={11} />
           </Form.Item>
 
           <Form.Item
@@ -103,16 +143,16 @@ export default function RegisterPage() {
             <Input placeholder="留空则与用户名相同" />
           </Form.Item>
 
-          {/* 老师必须携带邀请码（PRD 5.1） */}
-          {role === 'teacher' && (
-            <Form.Item
-              label="老师邀请码"
-              name="teacher_invite_code"
-              rules={[{ required: true, message: '老师注册必须填写邀请码' }]}
-            >
-              <Input placeholder="向管理员申请获得" />
-            </Form.Item>
-          )}
+          {/* 各角色必须携带对应的码（PRD 5.1、迭代 v2.1） */}
+          <Form.Item
+            key={role}
+            name={code.name}
+            label={code.label}
+            preserve={false}
+            rules={[{ required: true, message: `请输入${code.label}` }]}
+          >
+            <Input placeholder={code.placeholder} maxLength={12} />
+          </Form.Item>
 
           <Form.Item>
             <Button type="primary" htmlType="submit" block loading={loading}>

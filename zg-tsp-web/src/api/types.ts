@@ -102,7 +102,20 @@ export interface Article {
   content?: string
   status: ArticleStatus
   created_at: string | null
+  /** 原始上传文件路径（迭代 v2.1） */
+  file_url?: string | null
+  /** 原始文件名（迭代 v2.1） */
+  file_name?: string | null
+  /** 原始文件类型 pdf / docx（迭代 v2.1） */
+  file_type?: string | null
   my_record?: { duration_seconds: number; finished: boolean; points: number } | null
+}
+
+/** 导出 PDF 结果（迭代 v2.1） */
+export interface ExportPdfResult {
+  file_url: string
+  file_name: string
+  size_bytes: number
 }
 
 export interface ArticleStats {
