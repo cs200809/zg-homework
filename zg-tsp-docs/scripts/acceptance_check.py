@@ -266,6 +266,59 @@ def main() -> int:
     else:
         check(False, "4. 禁用立即生效", "未找到学生账号")
 
+    # 18. 登录后可自助修改当前账户密码（PRD 5.1、迭代 v2.1 条目 11）
+    #     入口：Web 右上角菜单 / 学生「我的」页；移动端四角色「我的」页
+    #     注意：本组会临时改动学生密码，末尾必须改回 test123456，
+    #     否则后续断言（该账号密码被硬编码为 test123456）会受影响。
+    _old_pwd = "test123456"
+    _new_pwd = "test654321"
+    _stu_phone = roles["student"]
+
+    # 18a. 原密码错误被拒
+    r = post(c, "/auth/change-password",
+             {"old_password": "wrong_password_xxx", "new_password": _new_pwd},
+             token=tokens["student"])
+    check(r.get("code") == 400, "18a. 改密：原密码错误被拒",
+          f"code={r.get('code')} {r.get('message', '')}")
+
+    # 18b. 新密码短于 6 位被拒（服务端 Pydantic min_length=6，与两端前端一致）
+    r = post(c, "/auth/change-password",
+             {"old_password": _old_pwd, "new_password": "12345"},
+             token=tokens["student"])
+    check(r.get("code") == 400, "18b. 改密：新密码短于 6 位被拒",
+          f"code={r.get('code')} {r.get('message', '')}")
+
+    # 18c. 新旧密码相同被拒
+    r = post(c, "/auth/change-password",
+             {"old_password": _old_pwd, "new_password": _old_pwd},
+             token=tokens["student"])
+    check(r.get("code") == 400, "18c. 改密：新旧密码相同被拒",
+          f"code={r.get('code')} {r.get('message', '')}")
+
+    # 18d. 原密码正确时改密成功
+    r = post(c, "/auth/change-password",
+             {"old_password": _old_pwd, "new_password": _new_pwd},
+             token=tokens["student"])
+    check(r.get("code") == 0, "18d. 改密：原密码正确时改密成功",
+          f"code={r.get('code')} {r.get('message', '')}")
+
+    # 18e. 新密码可登录
+    _login_new = post(c, "/auth/login", {"username": _stu_phone, "password": _new_pwd})
+    check(_login_new.get("code") == 0, "18e. 改密：新密码可登录",
+          f"code={_login_new.get('code')} {_login_new.get('message', '')}")
+
+    # 18f. 旧密码失效
+    _login_old = post(c, "/auth/login", {"username": _stu_phone, "password": _old_pwd})
+    check(_login_old.get("code") != 0, "18f. 改密：旧密码登录失效",
+          f"code={_login_old.get('code')}")
+
+    # 18g. 改回原密码（JWT 无状态，原 token 仍可用）
+    _back = post(c, "/auth/change-password",
+                 {"old_password": _new_pwd, "new_password": _old_pwd},
+                 token=tokens["student"])
+    check(_back.get("code") == 0, "18g. 改密：可改回原密码（测试数据复原）",
+          f"code={_back.get('code')} {_back.get('message', '')}")
+
     # 5. admin 无法禁用 admin
     r = post(c, "/admin/users/disable", {"user_id": 1}, token=admin)
     check(r.get("code") == 400, "5. admin 无法禁用 admin（含自己）", f"code={r.get('code')}")
