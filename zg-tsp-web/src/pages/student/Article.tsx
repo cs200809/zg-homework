@@ -8,9 +8,10 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Alert, App, Button, Card, Result, Space, Spin, Tag } from 'antd'
+import { Alert, App, Button, Card, Result, Space, Spin, Tag, Typography } from 'antd'
 import { useParams } from 'react-router-dom'
 
+import { fileUrl } from '../../api/client'
 import { articleApi } from '../../api/student'
 import type { Article } from '../../api/types'
 
@@ -150,19 +151,37 @@ export default function StudentArticle() {
         {article.content}
       </div>
 
+      <Typography.Paragraph type="secondary" style={{ marginTop: 12 }}>
+        本文为只读内容，不可编辑。
+      </Typography.Paragraph>
+
       <div style={{ textAlign: 'center', marginTop: 24 }}>
-        <Button
-          type="primary"
-          disabled={finished}
-          onClick={() => {
-            if (bodyRef.current) {
-              bodyRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' })
-            }
-            void onReachBottom()
-          }}
-        >
-          {finished ? '本篇已读完' : '我已读完全文'}
-        </Button>
+        <Space>
+          <Button
+            type="primary"
+            disabled={finished}
+            onClick={() => {
+              if (bodyRef.current) {
+                bodyRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' })
+              }
+              void onReachBottom()
+            }}
+          >
+            {finished ? '本篇已读完' : '我已读完全文'}
+          </Button>
+          <Button
+            onClick={async () => {
+              try {
+                const r = await articleApi.exportPdf(articleId)
+                window.open(fileUrl(r.file_url), '_blank')
+              } catch (e) {
+                message.error(e instanceof Error ? e.message : '导出失败')
+              }
+            }}
+          >
+            导出 PDF
+          </Button>
+        </Space>
       </div>
     </Card>
   )

@@ -28,6 +28,18 @@ export const classApi = {
       class_id: classId,
       student_id: studentId,
     }),
+
+  /** 重新生成班级邀请码（迭代 v2.1）：旧码立即失效，已入班学生不受影响 */
+  regenerateInvite: (classId: number) =>
+    post<{ class: ClassInfo; invite_code: string }>('/classes/regenerate-invite', {
+      class_id: classId,
+    }),
+
+  /** 重新生成学生绑定码（迭代 v2.1）：旧码立即失效，已有家长关系不受影响 */
+  regenerateBindCode: (studentId: number) =>
+    post<{ student_id: number; bind_code: string }>('/classes/regenerate-bind-code', {
+      student_id: studentId,
+    }),
 }
 
 export interface CreateHomeworkParams {

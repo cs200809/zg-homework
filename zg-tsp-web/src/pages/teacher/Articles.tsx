@@ -12,8 +12,10 @@ import {
   Table,
   Tag,
   Typography,
+  Upload,
 } from 'antd'
 
+import { fileUrl } from '../../api/client'
 import { articleApi } from '../../api/student'
 import type { Article, ArticleStats } from '../../api/types'
 
@@ -23,6 +25,7 @@ export default function TeacherArticles() {
   const [rows, setRows] = useState<Article[]>([])
   const [loading, setLoading] = useState(true)
   const [creating, setCreating] = useState(false)
+  const [fileList, setFileList] = useState<File[]>([])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -41,15 +44,25 @@ export default function TeacherArticles() {
     void load()
   }, [load])
 
-  async function onCreate(values: { title: string; content: string }) {
+  async function onCreate(values: { title: string; content?: string }) {
     try {
-      await articleApi.create(values.title, values.content)
+      await articleApi.createFile(values.title, values.content ?? '', fileList[0] ?? null)
       message.success('文章发布成功')
       form.resetFields()
+      setFileList([])
       setCreating(false)
       await load()
     } catch (e) {
       message.error(e instanceof Error ? e.message : '发布失败')
+    }
+  }
+
+  async function onExportPdf(article: Article) {
+    try {
+      const r = await articleApi.exportPdf(article.id)
+      window.open(fileUrl(r.file_url), '_blank')
+    } catch (e) {
+      message.error(e instanceof Error ? e.message : '导出失败')
     }
   }
 
@@ -138,11 +151,14 @@ export default function TeacherArticles() {
           },
           {
             title: '操作',
-            width: 200,
+            width: 280,
             render: (_: unknown, r) => (
               <>
                 <Button size="small" onClick={() => showRecords(r)}>
                   阅读记录
+                </Button>
+                <Button size="small" style={{ marginLeft: 8 }} onClick={() => onExportPdf(r)}>
+                  导出 PDF
                 </Button>
                 <Popconfirm
                   title="确认删除该文章？"
@@ -173,8 +189,30 @@ export default function TeacherArticles() {
           <Form.Item name="title" label="标题" rules={[{ required: true, message: '请输入标题' }]}>
             <Input placeholder="文章标题" />
           </Form.Item>
-          <Form.Item name="content" label="正文" rules={[{ required: true, message: '请输入正文' }]}>
+          <Form.Item
+            name="content"
+            label="正文"
+            extra="纯文本可直接填写；上传 PDF / Word 时服务端会自动抽取正文，二选一即可"
+          >
             <Input.TextArea rows={10} placeholder="文章正文内容" />
+          </Form.Item>
+          <Form.Item label="文章文件（可选，支持 PDF / Word）">
+            <Upload
+              accept=".pdf,.docx"
+              maxCount={1}
+              beforeUpload={(f) => {
+                setFileList([f])
+                return false
+              }}
+              onRemove={() => setFileList([])}
+              fileList={fileList.map((f) => ({
+                uid: f.name,
+                name: f.name,
+                status: 'done' as const,
+              }))}
+            >
+              <Button>选择文件</Button>
+            </Upload>
           </Form.Item>
         </Form>
       </Modal>

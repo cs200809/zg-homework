@@ -405,31 +405,12 @@ async def submit_homework(
 
 
 async def _save_upload(file: UploadFile) -> str:
-    """保存上传文件，校验扩展名与体积（PRD 10.1）。"""
-    from pathlib import Path
-
+    """保存作业附件，校验扩展名与体积（PRD 10.1）。"""
     from app.config import settings
+    from app.utils.upload import save_upload
 
-    suffix = Path(file.filename or "").suffix.lower().lstrip(".")
-    if suffix not in settings.allowed_extension_list:
-        raise _bad_request(
-            f"不支持的文件类型：{suffix or '未知'}，仅允许 {settings.allowed_extension_list}"
-        )
-
-    data = await file.read()
-    max_bytes = settings.max_upload_mb * 1024 * 1024
-    if len(data) > max_bytes:
-        raise _bad_request(f"文件超过 {settings.max_upload_mb}MB 限制")
-
-    upload_dir = Path(settings.upload_dir)
-    upload_dir.mkdir(parents=True, exist_ok=True)
-    name = f"{secrets_hex()}_{Path(file.filename or 'upload').name}"
-    (upload_dir / name).write_bytes(data)
-
-    return f"/uploads/{name}"
-
-
-def secrets_hex() -> str:
-    import secrets
-
-    return secrets.token_hex(8)
+    return await save_upload(
+        file,
+        allowed=settings.allowed_extension_list,
+        max_mb=settings.max_upload_mb,
+    )

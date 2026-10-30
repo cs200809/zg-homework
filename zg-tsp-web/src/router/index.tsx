@@ -22,6 +22,7 @@ import StudentArticle from '../pages/student/Article'
 import StudentGames from '../pages/student/Games'
 import StudentRank from '../pages/student/Rank'
 import StudentPoints from '../pages/student/Points'
+import StudentProfile from '../pages/student/Profile'
 
 import TeacherClasses from '../pages/teacher/Classes'
 import TeacherHomework from '../pages/teacher/Homework'
@@ -111,6 +112,7 @@ export default function AppRouter() {
         <Route path="/student/games" element={<StudentGames />} />
         <Route path="/student/rank" element={<StudentRank />} />
         <Route path="/student/points" element={<StudentPoints />} />
+        <Route path="/student/profile" element={<StudentProfile />} />
       </Route>
 
       {/* ---------- 老师端 ---------- */}

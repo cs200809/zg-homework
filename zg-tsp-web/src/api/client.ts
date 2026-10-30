@@ -86,3 +86,16 @@ export interface Paged<T> {
   page: number
   size: number
 }
+
+/**
+ * 把服务端返回的相对文件路径拼成可访问的绝对地址（迭代 v2.1）。
+ *
+ * 开发态走 vite 代理（/api/uploads/... → 服务端 /uploads/...），
+ * 生产态 VITE_API_BASE_URL 为绝对域名，同样成立。
+ */
+export function fileUrl(relativePath: string): string {
+  if (!relativePath) return ''
+  if (/^https?:\/\//i.test(relativePath)) return relativePath
+  const base = API_BASE_URL.replace(/\/$/, '')
+  return `${base}${relativePath.startsWith('/') ? '' : '/'}${relativePath}`
+}

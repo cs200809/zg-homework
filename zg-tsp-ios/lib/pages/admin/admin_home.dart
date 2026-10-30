@@ -1,10 +1,13 @@
-/// admin 端：概览 / 邀请码 / 用户 / 规则（PRD 5.8、9 admin 端，移动精简版）。
+/// admin 端：概览 / 邀请码 / 用户 / 规则 / 文章（PRD 5.8、9 admin 端，移动精简版）。
 library;
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/api_client.dart';
 import '../../core/apis.dart';
+import '../../core/config.dart';
 import '../../core/models.dart';
 import '../../widgets/common.dart';
 import '../common/profile_page.dart';
@@ -30,6 +33,7 @@ class _AdminHomeState extends State<AdminHome> {
           _InvitesPanel(),
           _UsersPanel(),
           _RulesPanel(),
+          _AdminArticlesPanel(),
           IdiomBankPage(),
           ProfilePage(),
         ],
@@ -59,6 +63,11 @@ class _AdminHomeState extends State<AdminHome> {
             label: '规则',
           ),
           NavigationDestination(
+            icon: Icon(Icons.article_outlined),
+            selectedIcon: Icon(Icons.article),
+            label: '文章',
+          ),
+          NavigationDestination(
             icon: Icon(Icons.format_quote_outlined),
             selectedIcon: Icon(Icons.format_quote),
             label: '题库',
@@ -70,6 +79,184 @@ class _AdminHomeState extends State<AdminHome> {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// 文章管理（PRD 5.8.4、5.5、迭代 v2.1）
+class _AdminArticlesPanel extends StatefulWidget {
+  const _AdminArticlesPanel();
+
+  @override
+  State<_AdminArticlesPanel> createState() => _AdminArticlesPanelState();
+}
+
+class _AdminArticlesPanelState extends State<_AdminArticlesPanel> {
+  List<Map<String, dynamic>> _rows = [];
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final r = await AdminApi.instance.articleList(page: 1, size: 50);
+      if (!mounted) return;
+      setState(() {
+        _rows = ((r['list'] as List?) ?? [])
+            .map((e) => e as Map<String, dynamic>)
+            .toList();
+      });
+    } catch (e) {
+      if (mounted) showSnack(context, errorMessage(e), error: true);
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _create() async {
+    final title = TextEditingController();
+    final content = TextEditingController();
+    String? filePath;
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (c) => StatefulBuilder(
+        builder: (c, setState) => AlertDialog(
+          title: const Text('发布文章'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(controller: title, decoration: const InputDecoration(labelText: '标题')),
+              const SizedBox(height: 12),
+              TextField(
+                controller: content,
+                maxLines: 6,
+                decoration: const InputDecoration(
+                  labelText: '正文',
+                  helperText: '可留空，改为上传 PDF / Word',
+                ),
+              ),
+              const SizedBox(height: 12),
+              OutlinedButton.icon(
+                onPressed: () async {
+                  final res = await FilePicker.platform.pickFiles(
+                    type: FileType.custom,
+                    allowedExtensions: const ['pdf', 'docx'],
+                  );
+                  final p = res?.files.single.path;
+                  if (p != null) setState(() => filePath = p);
+                },
+                icon: const Icon(Icons.attach_file),
+                label: Text(filePath == null ? '选择 PDF / Word（可选）' : '已选择文件'),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('取消')),
+            FilledButton(onPressed: () => Navigator.pop(c, true), child: const Text('发布')),
+          ],
+        ),
+      ),
+    );
+    if (ok == true && title.text.trim().isNotEmpty) {
+      try {
+        await AdminApi.instance.createArticle(
+          title.text.trim(),
+          content.text.trim(),
+          filePath: filePath,
+        );
+        if (mounted) showSnack(context, '发布成功');
+        await _load();
+      } catch (e) {
+        if (mounted) showSnack(context, errorMessage(e), error: true);
+      }
+    }
+    title.dispose();
+    content.dispose();
+  }
+
+  /// 导出 PDF（迭代 v2.1）
+  Future<void> _exportPdf(int articleId) async {
+    try {
+      final r = await AdminApi.instance.exportPdf(articleId);
+      final path = (r['file_url'] as String?) ?? '';
+      if (path.isEmpty) throw Exception('未返回文件地址');
+      final opened = await launchUrl(
+        Uri.parse('${AppConfig.apiBaseUrl}$path'),
+        mode: LaunchMode.externalApplication,
+      );
+      if (!opened && mounted) {
+        showSnack(context, '无法打开 PDF，请检查网络或稍后重试', error: true);
+      }
+    } catch (e) {
+      if (mounted) showSnack(context, errorMessage(e), error: true);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('文章管理'),
+        actions: [IconButton(icon: const Icon(Icons.add), onPressed: _create)],
+      ),
+      body: _loading
+          ? const LoadingView()
+          : _rows.isEmpty
+          ? const EmptyView(message: '还没有发布文章')
+          : RefreshIndicator(
+              onRefresh: _load,
+              child: ListView.builder(
+                padding: const EdgeInsets.all(12),
+                itemCount: _rows.length,
+                itemBuilder: (context, i) {
+                  final a = _rows[i];
+                  return Card(
+                    margin: const EdgeInsets.only(bottom: 8),
+                    child: ListTile(
+                      title: Text(a['title'] as String? ?? ''),
+                      subtitle: Text(
+                        a['status'] == 'published' ? '已发布' : '已隐藏',
+                      ),
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          IconButton(
+                            tooltip: '导出 PDF',
+                            icon: const Icon(Icons.picture_as_pdf_outlined),
+                            onPressed: () => _exportPdf(a['id'] as int),
+                          ),
+                          IconButton(
+                            tooltip: '删除',
+                            icon: const Icon(Icons.delete_outline),
+                            onPressed: () async {
+                              final messenger = ScaffoldMessenger.of(context);
+                              try {
+                                await AdminApi.instance.deleteArticle(a['id'] as int);
+                                if (!mounted) return;
+                                messenger.showSnackBar(
+                                  const SnackBar(content: Text('已删除')),
+                                );
+                                await _load();
+                              } catch (e) {
+                                if (!mounted) return;
+                                messenger.showSnackBar(
+                                  SnackBar(content: Text(errorMessage(e))),
+                                );
+                              }
+                            },
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
     );
   }
 }
@@ -206,9 +393,96 @@ class _OverviewPanelState extends State<_OverviewPanel> {
                       ),
                     ],
                   ),
+                  const SizedBox(height: 16),
+                  const _AdminClassesSection(),
                 ],
               ),
             ),
+    );
+  }
+}
+
+/// 班级管理：查看邀请码 + 重新生成（PRD 5.2、迭代 v2.1）
+class _AdminClassesSection extends StatefulWidget {
+  const _AdminClassesSection();
+
+  @override
+  State<_AdminClassesSection> createState() => _AdminClassesSectionState();
+}
+
+class _AdminClassesSectionState extends State<_AdminClassesSection> {
+  List<Map<String, dynamic>> _classes = [];
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final r = await AdminApi.instance.classes(page: 1, size: 50);
+      if (!mounted) return;
+      setState(() {
+        _classes = ((r['list'] as List?) ?? [])
+            .map((e) => e as Map<String, dynamic>)
+            .toList();
+      });
+    } catch (e) {
+      if (mounted) showSnack(context, errorMessage(e), error: true);
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  /// 重新生成班级邀请码（迭代 v2.1）
+  Future<void> _regenerateInvite(int classId) async {
+    try {
+      final r = await AdminApi.instance.regenerateClassInvite(classId);
+      if (!mounted) return;
+      showSnack(context, '新的邀请码：${r['invite_code']}');
+      await _load();
+    } catch (e) {
+      if (mounted) showSnack(context, errorMessage(e), error: true);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) return const LoadingView();
+    if (_classes.isEmpty) {
+      return const Card(
+        child: Padding(
+          padding: EdgeInsets.all(16),
+          child: Text('暂无班级', style: TextStyle(color: Colors.grey)),
+        ),
+      );
+    }
+    return Card(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Padding(
+            padding: EdgeInsets.fromLTRB(16, 12, 16, 4),
+            child: Text('班级邀请码', style: TextStyle(fontWeight: FontWeight.bold)),
+          ),
+          ..._classes.map(
+            (c) => ListTile(
+              dense: true,
+              title: Text(c['name'] as String? ?? ''),
+              subtitle: Text(
+                '邀请码：${c['invite_code']} · 班主任：${c['teacher_name'] ?? '-'} · 学生 ${c['student_count'] ?? 0} 人',
+              ),
+              trailing: IconButton(
+                tooltip: '重新生成邀请码',
+                icon: const Icon(Icons.autorenew),
+                onPressed: () => _regenerateInvite(c['id'] as int),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -437,8 +711,34 @@ class _UsersPanelState extends State<_UsersPanel> {
     }
   }
 
-  Future<void> _resetPassword(Map<String, dynamic> u) async {
+  /// 重新生成学生绑定码（迭代 v2.1）
+  Future<void> _regenerateBindCode(Map<String, dynamic> u) async {
     try {
+      final r = await AdminApi.instance.regenerateBindCode(u['id'] as int);
+      if (!mounted) return;
+      showDialog(
+        context: context,
+        builder: (c) => AlertDialog(
+          title: Text('${u['username']} 的新绑定码'),
+          content: SelectableText(
+            r['bind_code'] as String,
+            style: const TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.bold,
+              fontFamily: 'monospace',
+            ),
+          ),
+          actions: [
+            FilledButton(onPressed: () => Navigator.pop(c), child: const Text('知道了')),
+          ],
+        ),
+      );
+    } catch (e) {
+      if (mounted) showSnack(context, errorMessage(e), error: true);
+    }
+  }
+
+  Future<void> _resetPassword(Map<String, dynamic> u) async {    try {
       final r = await AdminApi.instance.resetPassword(u['id'] as int);
       if (!mounted) return;
       showDialog(
@@ -565,6 +865,12 @@ class _UsersPanelState extends State<_UsersPanel> {
                                         onPressed: () => _resetPassword(u),
                                         child: const Text('改密'),
                                       ),
+                                      if (u['role'] == 'student')
+                                        IconButton(
+                                          tooltip: '重新生成绑定码',
+                                          icon: const Icon(Icons.qr_code_2),
+                                          onPressed: () => _regenerateBindCode(u),
+                                        ),
                                     ],
                                   ),
                           ),

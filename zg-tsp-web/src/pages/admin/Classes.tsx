@@ -1,8 +1,9 @@
 /** admin 班级总览（PRD 5.8.5、9 admin 端）。 */
 
 import { useCallback, useEffect, useState } from 'react'
-import { App, Card, Table, Typography } from 'antd'
+import { App, Button, Card, Popconfirm, Table, Typography } from 'antd'
 
+import { classApi } from '../../api/classes'
 import { statsApi } from '../../api/parent'
 import type { PageResult } from '../../api/classes'
 
@@ -39,6 +40,16 @@ export default function AdminClasses() {
     void load()
   }, [load])
 
+  async function onRegenerateInvite(row: ClassRow) {
+    try {
+      const r = await classApi.regenerateInvite(row.id)
+      message.success(`新的邀请码：${r.invite_code}`)
+      await load()
+    } catch (e) {
+      message.error(e instanceof Error ? e.message : '重新生成失败')
+    }
+  }
+
   return (
     <Card title="班级总览">
       <Table<ClassRow>
@@ -68,6 +79,23 @@ export default function AdminClasses() {
             dataIndex: 'created_at',
             width: 170,
             render: (v: string) => new Date(v).toLocaleString(),
+          },
+          {
+            title: '操作',
+            width: 140,
+            render: (_: unknown, row: ClassRow) => (
+              <Popconfirm
+                title="重新生成邀请码？"
+                description="旧邀请码立即失效，已加入该班的学生不受影响。"
+                okText="确认"
+                cancelText="取消"
+                onConfirm={() => onRegenerateInvite(row)}
+              >
+                <Button type="link" size="small">
+                  重新生成邀请码
+                </Button>
+              </Popconfirm>
+            ),
           },
         ]}
       />

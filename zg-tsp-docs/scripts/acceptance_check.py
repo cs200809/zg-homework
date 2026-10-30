@@ -41,6 +41,25 @@ def post(c: httpx.Client, path: str, body=None, token: str | None = None):
 ADMIN_PASSWORDS = ["admin_demo_123", "admin_demo_1234", "test123456", "admin123456"]
 
 
+def _phone(tag: int) -> str:
+    """生成 11 位手机号（迭代 v2.1：注册用户名必须是手机号）。"""
+    return f"138{SUFFIX}{tag:02d}"
+
+
+def _make_pdf() -> bytes:
+    """构造一份最小可读 PDF（用于验收「发布 PDF 文章」）。"""
+    import io
+
+    from reportlab.lib.pagesizes import A4
+    from reportlab.pdfgen import canvas
+
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=A4)
+    c.drawString(72, 720, "Acceptance PDF")
+    c.save()
+    return buf.getvalue()
+
+
 def _ensure_admin_login(c: httpx.Client) -> str | None:
     """确保能以 admin 登录。
 
@@ -129,28 +148,24 @@ def main() -> int:
 
     print("\n=== PRD 12 业务验收 ===")
 
-    # 1. 四角色登录 + 权限隔离
-    roles = {}
-    for role, uname in [
-        ("teacher", f"ac_t{suffix}"),
-        ("student", f"ac_s{suffix}"),
-        ("parent", f"ac_p{suffix}"),
-    ]:
-        roles[role] = uname
+    # 1. 四角色注册（迭代 v2.1：用户名必须是手机号；
+    #    学生须带班级邀请码、家长须带学生绑定码）
+    roles = {
+        "teacher": _phone(1),
+        "student": _phone(2),
+        "parent": _phone(3),
+    }
+
     # admin 建账号：老师需邀请码
     inv = post(c, "/admin/invite/create", {"count": 3, "expire_days": 7}, token=admin)
     codes = inv.get("data", {}).get("codes", [])
-    ok = True
-    detail = ""
-    for role, uname in roles.items():
-        body = {"username": uname, "password": "test123456", "role": role}
-        if role == "teacher":
-            body["teacher_invite_code"] = codes[0]
-        rr = post(c, "/auth/register", body)
-        if rr.get("code") != 0:
-            ok, detail = False, f"{role} 注册失败: {rr.get('message')}"
-            break
-    check(ok, "1. 四角色可注册", detail)
+
+    # 1a. 老师注册（一码一用）
+    r = post(c, "/auth/register", {
+        "username": roles["teacher"], "password": "test123456", "role": "teacher",
+        "teacher_invite_code": codes[0],
+    })
+    check(r.get("code") == 0, "1. 老师可注册", f"code={r.get('code')} {r.get('message', '')}")
 
     # admin 登录
     r = post(c, "/auth/login", {"username": "admin", "password": "admin_demo_123"})
@@ -158,14 +173,39 @@ def main() -> int:
 
     # 重置密码确保可登录
     tokens = {}
-    login_ok = True
-    login_detail = "teacher/student/parent"
-    for role, uname in roles.items():
-        tokens[role] = admin_reset_pwd(uname, "test123456") or ""
-        if not tokens[role]:
-            login_ok = False
-            login_detail = f"{role} 重置密码后仍无法登录"
-    check(login_ok, "1c. 四角色均可登录", login_detail)
+    tokens["teacher"] = admin_reset_pwd(roles["teacher"], "test123456") or ""
+
+    # 老师建班 → 学生凭班级邀请码注册（自动入班）
+    cls = post(c, "/classes/create", {"name": f"验收班{suffix}"}, token=tokens["teacher"])
+    class_info = cls.get("data", {}).get("class")
+    if not class_info:
+        check(False, "1c. 老师建班", f"建班失败: {cls.get('message')}")
+        return summary()
+    cid = class_info["id"]
+    class_invite = class_info["invite_code"]
+
+    r = post(c, "/auth/register", {
+        "username": roles["student"], "password": "test123456", "role": "student",
+        "class_invite_code": class_invite,
+    })
+    check(r.get("code") == 0, "1c. 学生可注册（带班级邀请码）",
+          f"code={r.get('code')} {r.get('message', '')}")
+    tokens["student"] = admin_reset_pwd(roles["student"], "test123456") or ""
+
+    # 家长凭学生绑定码注册（自动绑定）
+    ul = post(c, "/admin/users/list", {"keyword": roles["student"], "size": 5}, token=admin)
+    su = next((u for u in ul.get("data", {}).get("list", []) if u["username"] == roles["student"]), None)
+    r = post(c, "/auth/register", {
+        "username": roles["parent"], "password": "test123456", "role": "parent",
+        "bind_code": (su or {}).get("bind_code"),
+    })
+    check(r.get("code") == 0, "1d. 家长可注册（带学生绑定码）",
+          f"code={r.get('code')} {r.get('message', '')}")
+    tokens["parent"] = admin_reset_pwd(roles["parent"], "test123456") or ""
+
+    login_ok = all(tokens.values())
+    login_detail = "teacher/student/parent" if login_ok else "有角色重置密码后仍无法登录"
+    check(login_ok, "1e. 四角色均可登录", login_detail)
 
     # 权限隔离：学生访问 admin 接口 403
     r = post(c, "/admin/stats/overview", token=tokens.get("student"))
@@ -178,21 +218,28 @@ def main() -> int:
 
     # 2. 老师邀请码一码一用
     r1 = post(c, "/auth/register", {
-        "username": f"ac_t2_{suffix}", "password": "test123456",
+        "username": _phone(5), "password": "test123456",
         "role": "teacher", "teacher_invite_code": codes[1],
     })
     r2 = post(c, "/auth/register", {
-        "username": f"ac_t3_{suffix}", "password": "test123456",
+        "username": _phone(6), "password": "test123456",
         "role": "teacher", "teacher_invite_code": codes[1],
     })
     check(r1.get("code") == 0 and r2.get("code") == 400,
           "2. 老师邀请码一码一用", f"首次={r1.get('code')} 二次={r2.get('code')}")
 
     r = post(c, "/auth/register", {
-        "username": f"ac_t4_{suffix}", "password": "test123456",
+        "username": _phone(7), "password": "test123456",
         "role": "teacher", "teacher_invite_code": "INVALID1",
     })
     check(r.get("code") == 400, "2b. 无效邀请码被拒")
+
+    # 2c. 非手机号用户名被拒
+    r = post(c, "/auth/register", {
+        "username": "not_a_phone", "password": "test123456",
+        "role": "teacher", "teacher_invite_code": codes[2],
+    })
+    check(r.get("code") == 400, "2c. 非手机号用户名被拒", f"code={r.get('code')}")
 
     # 3. admin 批量生成/撤销邀请码
     r = post(c, "/admin/invite/create", {"count": 5, "expire_days": 7}, token=admin)
@@ -233,8 +280,9 @@ def main() -> int:
     # 禁用规则不发
     post(c, "/admin/rules/update", {"rule_key": "checkin_daily", "enabled": False}, token=admin)
     # 换个学生测禁用
-    s2 = f"ac_s2_{suffix}"
-    post(c, "/auth/register", {"username": s2, "password": "test123456", "role": "student"})
+    s2 = _phone(4)
+    post(c, "/auth/register", {"username": s2, "password": "test123456",
+                               "role": "student", "class_invite_code": class_invite})
     tok2 = post(c, "/auth/login", {"username": s2, "password": "test123456"})["data"]["token"]
     ci2 = post(c, "/checkin/do", token=tok2)
     check(ci2.get("data", {}).get("points") == 0, "6b. 禁用规则不发放",
@@ -250,15 +298,12 @@ def main() -> int:
     d = post(c, "/articles/delete", {"article_id": aid}, token=admin)
     check(d.get("code") == 0, "7b. admin 可删除任意文章")
 
-    # 8. 学生加入班级 + 老师布置作业
-    cls = post(c, "/classes/create", {"name": f"验收班{suffix}"}, token=tokens["teacher"])
-    class_info = cls.get("data", {}).get("class")
-    if not class_info:
-        check(False, "8. 学生加入班级", f"建班失败: {cls.get('message')}")
-        return summary()
-    cid = class_info["id"]
-    join = post(c, "/classes/join", {"invite_code": class_info["invite_code"]}, token=tokens["student"])
-    check(join.get("code") == 0, "8. 学生加入班级", f"code={join.get('code')}")
+    # 8. 学生注册时已自动入班（迭代 v2.1）+ 老师布置作业
+    my = post(c, "/classes/my", token=tokens["student"])
+    joined = my.get("data", {}).get("classes", [])
+    check(bool(joined) and joined[0].get("id") == cid,
+          "8. 学生注册时自动加入班级",
+          f"class_id={joined[0].get('id') if joined else None}")
 
     dl = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%S")
     hw = post(c, "/homework/create", {
@@ -307,11 +352,12 @@ def main() -> int:
         check(before == after, "12. 挂机不计分", f"挂机3次后积分 {before} → {after}")
 
     # 13. 家长绑定 + 扣分 + 余额不足
+    # 迭代 v2.1：家长注册时已凭绑定码自动绑定，此处校验绑定关系成立
     ul = post(c, "/admin/users/list", {"keyword": roles["student"], "size": 5}, token=admin)
     su = next(u for u in ul["data"]["list"] if u["username"] == roles["student"])
-    bind_code = su.get("bind_code")
-    bind = post(c, "/parent/bind", {"bind_code": bind_code}, token=tokens["parent"])
-    check(bind.get("code") == 0, "13. 家长绑定孩子", f"code={bind.get('code')}")
+    kids = post(c, "/parent/children", token=tokens["parent"])
+    kid_ids = [k.get("student_id") for k in kids.get("data", {}).get("list", [])]
+    check(su["id"] in kid_ids, "13. 家长注册时自动绑定孩子", f"孩子={kid_ids}")
 
     consume = post(c, "/parent/consume", {"student_id": su["id"], "item": "看手机", "points": 3}, token=tokens["parent"])
     check(consume.get("code") == 0, "13b. 家长扣分成功", f"剩余 {consume.get('data', {}).get('total_points')}")
@@ -344,10 +390,53 @@ def main() -> int:
     for path, ops in spec.get("paths", {}).items():
         if path in ("/health", "/openapi.json", "/docs", "/docs/oauth2-redirect", "/redoc"):
             continue
+        # 迭代 v2.1：/uploads 是静态文件挂载（GET 下载上传/导出的文件），
+        # 不是业务接口，不纳入「全 POST」约束
+        if path.startswith("/uploads"):
+            continue
         for method in ops:
             if method.lower() != "post":
                 bad.append(f"{method.upper()} {path}")
     check(not bad, "16. 全接口均为 POST", f"非 POST: {bad[:3]}" if bad else "无 GET/PUT/DELETE 业务接口")
+
+    # 17. 迭代 v2.1 新能力
+    regen = post(c, "/classes/regenerate-invite", {"class_id": cid}, token=tokens["teacher"])
+    check(regen.get("code") == 0 and regen.get("data", {}).get("invite_code"),
+          "17. 老师可重新生成班级邀请码", f"新码={regen.get('data', {}).get('invite_code')}")
+
+    regen_b = post(c, "/classes/regenerate-bind-code", {"student_id": su["id"]}, token=tokens["teacher"])
+    check(regen_b.get("code") == 0 and regen_b.get("data", {}).get("bind_code"),
+          "17b. 老师可重新生成学生绑定码", f"新码={regen_b.get('data', {}).get('bind_code')}")
+
+    # 导出 PDF：单独建一篇文章（7b 步已把 aid 那篇删了）
+    exp_art = post(c, "/articles/create", {"title": f"验收导出{suffix}", "content": "导出正文"},
+                   token=tokens["teacher"])
+    exp_id = exp_art.get("data", {}).get("article", {}).get("id")
+    exp = post(c, "/articles/export-pdf", {"article_id": exp_id}, token=tokens["student"])
+    check(exp.get("code") == 0 and exp.get("data", {}).get("file_url", "").startswith("/uploads/"),
+          "17c. 文章可导出 PDF",
+          f"code={exp.get('code')} url={exp.get('data', {}).get('file_url')}")
+
+    # 导出文件可访问（静态挂载）
+    file_url = exp.get("data", {}).get("file_url", "")
+    if file_url:
+        fr = httpx.get(f"{BASE}{file_url}", timeout=15)
+        check(fr.status_code == 200 and fr.content[:5] == b"%PDF-",
+              "17d. 导出文件可通过 /uploads 访问",
+              f"status={fr.status_code} type={fr.headers.get('content-type')}")
+
+    # 发布 PDF / word 文章（multipart）
+    pdf_bytes = _make_pdf()
+    pub = c.post(
+        f"{BASE}/articles/create-file",
+        data={"title": f"验收PDF{suffix}"},
+        files={"file": ("a.pdf", pdf_bytes, "application/pdf")},
+        headers={"Authorization": f"Bearer {tokens['teacher']}"},
+    )
+    pub_body = pub.json()
+    check(pub_body.get("code") == 0 and pub_body.get("data", {}).get("article", {}).get("file_type") == "pdf",
+          "17e. 可发布 PDF 文章（服务端抽取正文）",
+          f"code={pub_body.get('code')} {pub_body.get('message', '')}")
 
     return summary()
 

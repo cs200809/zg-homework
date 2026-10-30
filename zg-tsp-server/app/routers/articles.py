@@ -12,12 +12,15 @@
 - 读完 +5，单篇 1 次
 """
 
+import secrets
 from datetime import date, datetime, timedelta
+from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.db.repo import Repo
 from app.db.session import get_db
 from app.models.constants import (
@@ -29,8 +32,10 @@ from app.models.constants import (
     ROLE_TEACHER,
 )
 from app.models.entities import Article, ReadingRecord, User
+from app.services import document_service
 from app.utils.deps import get_verified_user
 from app.utils.response import CODE_BAD_REQUEST, CODE_FORBIDDEN, CODE_NOT_FOUND, ok
+from app.utils.upload import save_bytes
 
 router = APIRouter(prefix="/articles", tags=["阅读"])
 
@@ -59,6 +64,9 @@ def _article_to_dict(a: Article, with_content: bool = True) -> dict:
         "title": a.title,
         "cover": a.cover,
         "status": a.status,
+        "file_url": a.file_url,
+        "file_name": a.file_name,
+        "file_type": a.file_type,
         "created_at": a.created_at.isoformat() if a.created_at else None,
     }
     if with_content:
@@ -114,6 +122,77 @@ async def create_article(
             content=req.content,
             cover=req.cover,
             status=ARTICLE_PUBLISHED,
+        )
+    )
+    db.commit()
+    return ok({"article": _article_to_dict(art)})
+
+
+@router.post("/create-file")
+async def create_article_file(
+    title: str = Form(...),
+    cover: str | None = Form(None),
+    content: str | None = Form(None),
+    file: UploadFile | None = File(None),
+    user: User = Depends(get_verified_user),
+    db: Session = Depends(get_db),
+):
+    """发布文章 —— teacher / admin 均可；支持纯文本 / PDF / word（PRD 5.5、迭代 v2.1）。
+
+    - 上传 PDF / word：服务端抽取正文入库，学生端读到的仍是**文本**（天然只读）
+    - 不传文件：直接使用 content 纯文本
+    """
+    if user.role not in (ROLE_TEACHER, ROLE_ADMIN):
+        raise _forbidden("仅老师或管理员可发布文章")
+
+    title = (title or "").strip()
+    if not title:
+        raise _bad_request("请填写标题")
+
+    text = (content or "").strip()
+    file_url = None
+    file_name = None
+    file_type = None
+
+    if file is not None and file.filename:
+        suffix = Path(file.filename).suffix.lower().lstrip(".")
+        if suffix not in settings.article_allowed_extension_list:
+            raise _bad_request(
+                f"不支持的文件类型：{suffix or '未知'}，"
+                f"仅允许 {', '.join(settings.article_allowed_extension_list)}"
+            )
+        data = await file.read()
+        if len(data) > settings.article_max_upload_mb * 1024 * 1024:
+            raise _bad_request(f"文件超过 {settings.article_max_upload_mb}MB 限制")
+
+        try:
+            text = document_service.extract_text(data, suffix)
+        except document_service.DocumentParseError as exc:
+            raise _bad_request(str(exc))
+
+        file_url = save_bytes(
+            data,
+            file.filename,
+            allowed=settings.article_allowed_extension_list,
+            max_mb=settings.article_max_upload_mb,
+        )
+        file_name = Path(file.filename).name
+        file_type = suffix
+
+    if not text:
+        raise _bad_request("请填写正文或上传文章文件")
+
+    art = Repo(db).add_article(
+        Article(
+            author_id=user.id,
+            created_role=user.role,
+            title=title,
+            content=text,
+            cover=cover,
+            status=ARTICLE_PUBLISHED,
+            file_url=file_url,
+            file_name=file_name,
+            file_type=file_type,
         )
     )
     db.commit()
@@ -405,3 +484,37 @@ async def delete_article(
     db.delete(art)
     db.commit()
     return ok({"deleted_id": req.article_id})
+
+
+@router.post("/export-pdf")
+async def export_article_pdf(
+    req: ArticleIdRequest,
+    user: User = Depends(get_verified_user),
+    db: Session = Depends(get_db),
+):
+    """导出文章为 PDF（PRD 5.5、迭代 v2.1）。
+
+    服务端用 reportlab 排版（中文字体 STSong-Light），生成的 PDF 存 uploads，
+    返回相对路径供客户端下载/预览。学生端仅可导出 published 文章。
+    """
+    repo = Repo(db)
+    art = repo.get_article_by_id(req.article_id)
+    if not art:
+        raise _not_found("文章不存在")
+    if user.role == ROLE_STUDENT and art.status != ARTICLE_PUBLISHED:
+        raise _not_found("文章不存在")
+    if user.role not in (ROLE_STUDENT, ROLE_TEACHER, ROLE_ADMIN):
+        raise _forbidden("无权限导出文章")
+
+    pdf_bytes = document_service.render_text_to_pdf(art.title, art.content)
+    file_url = save_bytes(
+        pdf_bytes,
+        f"{art.id}_{secrets.token_hex(4)}.pdf",
+        allowed=["pdf"],
+        max_mb=settings.article_max_upload_mb,
+    )
+    return ok({
+        "file_url": file_url,
+        "file_name": f"{art.title}.pdf",
+        "size_bytes": len(pdf_bytes),
+    })

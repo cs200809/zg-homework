@@ -23,6 +23,8 @@ dependencies:
   # 与 Android 端保持同一版本下限：10.x 起插件自身 compileSdk 升至 36，
   # 8.x 仍为 android-34，会在 Android 端触发 AAR metadata 校验失败。
   file_picker: ^10.3.10
+  # 打开服务端生成的 PDF（导出文章，迭代 v2.1）
+  url_launcher: ^6.3.1
   # 图表（积分概览）
   fl_chart: ^0.69.0
   # 日期

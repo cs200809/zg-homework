@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { App, Button, Card, Form, Input, Modal, Popconfirm, Select, Table, Tag } from 'antd'
 
+import { classApi } from '../../api/classes'
 import { userApi } from '../../api/parent'
 import type { AdminUser, Role } from '../../api/types'
 
@@ -54,8 +55,32 @@ export default function AdminUsers() {
     }
   }
 
-  async function resetPassword(u: AdminUser) {
+  async function regenerateBindCode(u: AdminUser) {
     try {
+      const r = await classApi.regenerateBindCode(u.id)
+      Modal.info({
+        title: `${u.username} 的新绑定码`,
+        content: (
+          <div>
+            <p>绑定码：</p>
+            <Input
+              defaultValue={r.bind_code}
+              readOnly
+              style={{ fontFamily: 'monospace' }}
+              onFocus={(e) => e.target.select()}
+            />
+            <p style={{ marginTop: 8, color: '#999' }}>
+              旧绑定码已立即失效，已绑定的家长不受影响。请把新码告知家长。
+            </p>
+          </div>
+        ),
+      })
+    } catch (e) {
+      message.error(e instanceof Error ? e.message : '重新生成失败')
+    }
+  }
+
+  async function resetPassword(u: AdminUser) {    try {
       const r = await userApi.resetPassword(u.id)
       Modal.info({
         title: `重置 ${u.username} 的密码`,
@@ -171,7 +196,7 @@ export default function AdminUsers() {
           },
           {
             title: '操作',
-            width: 240,
+            width: 320,
             render: (_: unknown, r) => {
               if (r.role === 'admin') return <span style={{ color: '#999' }}>不可操作</span>
               return (
@@ -193,6 +218,19 @@ export default function AdminUsers() {
                   >
                     重置密码
                   </Button>
+                  {r.role === 'student' && (
+                    <Popconfirm
+                      title="重新生成绑定码？"
+                      description="旧绑定码立即失效，已绑定的家长不受影响。"
+                      okText="确认"
+                      cancelText="取消"
+                      onConfirm={() => regenerateBindCode(r)}
+                    >
+                      <Button size="small" type="link" style={{ marginLeft: 8 }}>
+                        重新生成绑定码
+                      </Button>
+                    </Popconfirm>
+                  )}
                 </>
               )
             },

@@ -9,6 +9,11 @@
 **按前缀**（默认，快）：删掉所有 test_ 开头的用户及其关联数据。
 新产生的测试数据都能被清掉，不必维护清单。
 
+> 迭代 v2.1 起，注册接口要求用户名是**手机号**，因此通过 API 注册出来的
+> 测试账号无法再用 test_ 前缀标识（用户名必须是 11 位手机号）。
+> 这类账号统一把**昵称**设为 test_ 前缀，本脚本按
+> 「用户名 **或** 昵称带 test_ 前缀」判定为测试数据。
+
 **按清单**（--by-keep-list）：只保留下列种子数据，其余全删。
 用于清理历史遗留的旧命名测试数据（t{hex}_、ac_、dbg_ 等）。
 
@@ -46,6 +51,13 @@ KEEP_INVITE_CODES = ("TEACH2024",)
 # 家长绑定：parent01 ↔ student01
 KEEP_PARENT_BINDINGS = (("parent01", "student01"),)
 
+# 测试用户判定（迭代 v2.1 起，API 注册的用户名是手机号，
+# 无法用 test_ 前缀标识，改用「用户名 **或** 昵称带 test_ 前缀」判定）
+_TEST_USER_SQL = "(u.username LIKE 'test\\_%' OR u.nickname LIKE 'test\\_%')"
+_NOT_TEST_USER_SQL = (
+    "(u.username NOT LIKE 'test\\_%' AND (u.nickname IS NULL OR u.nickname NOT LIKE 'test\\_%'))"
+)
+
 # 需要先清空的「子表」（含 users 外键）。顺序按外键依赖自底向上。
 # 表名 -> 是否保留种子行（True 表示按业务键保留）
 CHILD_TABLES = (
@@ -79,7 +91,7 @@ def _kept_user_ids(db, by_keep_list: bool) -> list[int]:
         ).all()
         return [r[0] for r in rows]
 
-    rows = db.execute(text("SELECT id FROM users WHERE username NOT LIKE 'test\\_%'")).all()
+    rows = db.execute(text(f"SELECT id FROM users u WHERE {_NOT_TEST_USER_SQL}")).all()
     return [r[0] for r in rows]
 
 
@@ -108,7 +120,7 @@ def _kept_class_ids(db, by_keep_list: bool) -> list[int]:
         text(
             "SELECT c.id FROM classes c "
             "LEFT JOIN users u ON u.id = c.teacher_id "
-            "WHERE u.id IS NULL OR u.username NOT LIKE 'test\\_%'"
+            f"WHERE u.id IS NULL OR {_NOT_TEST_USER_SQL}"
         )
     ).all()
     return [r[0] for r in rows]
@@ -204,10 +216,10 @@ def _plan(db, by_keep_list: bool) -> dict:
             # 成语题库：保留由**非测试账号**创建的题（种子题 + admin 手工导入）
             n = db.execute(
                 text(
-                    """
+                    f"""
                     SELECT COUNT(*) FROM idiom_questions iq
                     LEFT JOIN users u ON u.id = iq.created_by
-                    WHERE u.id IS NULL OR u.username LIKE 'test\\_%'
+                    WHERE u.id IS NULL OR {_TEST_USER_SQL}
                     """
                 )
             ).scalar_one()
@@ -358,10 +370,10 @@ def _purge(db, by_keep_list: bool) -> dict:
     # 成语题库：删掉由测试账号创建的题。
     # MySQL 不允许 DELETE 的子查询引用同一张表，改用 LEFT JOIN 判存在性。
     deleted["idiom_questions"] = run(
-        """
+        f"""
         DELETE iq FROM idiom_questions iq
         LEFT JOIN users u ON u.id = iq.created_by
-        WHERE u.id IS NULL OR u.username LIKE 'test\\_%'
+        WHERE u.id IS NULL OR {_TEST_USER_SQL}
         """
     )
 
