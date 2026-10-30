@@ -65,6 +65,26 @@ function Protected({
   return children
 }
 
+/** 已登录守卫（不限角色、不套 AdminLayout）。
+ *
+ *  用于改密页这类独立全屏页：未登录跳登录页，已登录直接渲染。
+ *  刻意不检查 must_change_password —— 该状态下用户本来就该停在这个页面上，
+ *  若在这里也检查会形成重定向循环。 */
+function RequireAuth({ children }: { children: ReactElement }): ReactElement {
+  const { token, user, initialized } = useAuthStore()
+
+  if (!initialized) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', padding: 80 }}>
+        <Spin size="large" />
+      </div>
+    )
+  }
+  if (!token || !user) return <Navigate to="/login" replace />
+
+  return children
+}
+
 /** 已登录用户访问登录/注册页时跳回首页。 */
 function GuestOnly({ children }: { children: ReactElement }): ReactElement {
   const { token, user, initialized } = useAuthStore()
@@ -94,7 +114,14 @@ export default function AppRouter() {
           </GuestOnly>
         }
       />
-      <Route path="/change-password" element={<ChangePasswordPage />} />
+      <Route
+        path="/change-password"
+        element={
+          <RequireAuth>
+            <ChangePasswordPage />
+          </RequireAuth>
+        }
+      />
 
       {/* ---------- 学生端 ---------- */}
       <Route
