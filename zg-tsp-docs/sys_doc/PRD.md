@@ -25,7 +25,7 @@
 | 8 | 发布文章支持纯文本 / PDF / word | 新增 `POST /articles/create-file`（multipart），服务端抽取正文入库；`articles` 表新增 `file_url` / `file_name` / `file_type` |
 | 9 | 阅读文章支持导出 PDF | 新增 `POST /articles/export-pdf`，服务端用 reportlab 排版（内置中文 CID 字体 `STSong-Light`） |
 | 10 | 阅读时只读不可编辑 | 学生端无任何编辑入口，正文只读渲染（已在 Web / 移动端落实，并加只读标识） |
-| 11 | 登录后可自助修改当前账户密码 | `POST /auth/change-password` 已实现；本迭代在 Web（右上角菜单 / 学生端「我的」页）与移动端补充入口 |
+| 11 | 登录后可自助修改当前账户密码 | ✅ 已完成。`POST /auth/change-password` 服务端契约已满足（新密码 ≥6 位，校验失败返回 400）；Web 端入口在右上角头像菜单与学生端「我的」页，移动端入口在四角色通用「我的」页；验收见 `scripts/acceptance_check.py` 第 18 组断言 |
 | 12 | 修复上传文件无法访问 | `app/main.py` 新增 `StaticFiles("/uploads")` 挂载（此前 `/uploads/<name>` 无对应路由，作业附件与导出文件实际 404） |
 
 > **本版本未覆盖的既有缺口（非本次迭代范围，遗留待办）**

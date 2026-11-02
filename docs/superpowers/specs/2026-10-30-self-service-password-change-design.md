@@ -42,7 +42,7 @@
 ## 2. 目标
 
 1. Web 端与移动端在**所有角色**下都能自助修改当前账户密码，入口明确可达。
-2. 服务端补齐密码强度校验，与两端前端对齐。
+2. 服务端密码强度校验与两端前端对齐（**核实后已满足**，本轮只补验收覆盖，见 §4.1）。
 3. `scripts/dev.sh` 启动前明确报告"跑的是哪份代码、代码有多新"，杜绝本轮这类静默不同步问题。
 4. 本快照与五个独立仓库同步一致，独立仓库可直接验收。
 
@@ -57,15 +57,18 @@
 
 ## 4. 设计
 
-### 4.1 服务端：密码强度校验
+### 4.1 服务端：密码强度校验（**已满足，本轮只补验收覆盖**）
 
-**文件**：`zg-tsp-server/app/schemas/auth.py`
+**核实结论**：`zg-tsp-server/app/schemas/auth.py` 的 `ChangePasswordRequest.new_password`
+**已经**声明 `Field(..., min_length=6, max_length=64)`；`zg-tsp-server/app/main.py` 的
+`RequestValidationError` 全局处理器把 Pydantic 校验失败转成 **400 + `{code, message}`**
+（不是 FastAPI 默认的 422），符合项目统一响应契约。
 
-`ChangePasswordRequest.new_password` 增加 `min_length=6` 约束，与 Web 端（`min: 6`）和移动端（`length < 6`）前端校验对齐。
+`zg-tsp-server/app/routers/auth.py` 的 `change_password` 也已有原密码校验与
+"新旧密码不得相同"校验。
 
-现状：≥6 位只在两端前端校验，直接调 `POST /auth/change-password` 可设置 1 位密码。
-
-`zg-tsp-server/app/routers/auth.py` 的 `change_password` 逻辑不变（已有原密码校验、新旧密码不得相同校验）。
+因此服务端**不需要改代码**。本轮改为在 `acceptance_check.py` 补第 18 组端到端断言，
+把这三条契约钉住（见 §4.5）。
 
 ### 4.2 Web 端：路由守卫与返回来源
 
@@ -147,15 +150,40 @@ Android 与 iOS 两份**手工同步**（仓库无 CI 校验）。
 1. **命中来源**：记录 `REPOS_DIR` 是来自环境变量还是默认探测（`../zg-tsp-repos` → `$ROOT` → `~/zg-tsp-repos`）
 2. **同步警告**：`REPOS_DIR != ROOT` 时显式提示"跑的不是本快照"
 3. **模块 git 状态**：对每个模块目录，若 `git -C <dir> rev-parse --is-inside-work-tree` 成功，输出分支、`HEAD` 短 hash、已跟踪改动数、未跟踪数；不是 git 目录则说明
-4. **与快照差异**：用 `diff -rq` 逐模块统计，排除 `.git`、`node_modules`、`dist`、`build`、`.dart_tool`、`.gradle`、`.venv`、`__pycache__`、`.dev-logs`；仅在 `REPOS_DIR != ROOT` 且快照下五个模块都存在时统计
+4. **与快照差异**：用 `diff -rq` 逐模块统计；仅在 `REPOS_DIR != ROOT` 且快照下五个模块都存在时统计
 5. **POSIX `sh` 兼容**：不使用数组、`[[ ]]`、进程替换（与现有脚本约束一致）
 6. `status` 命令复用同一份报告
+
+**排除清单（实施时补齐，`.gitignore` 排除项也要排除，否则差异统计失真）**：
+
+`diff_exclude_args` 除构建产物外，还需排除各模块 `.gitignore` 里的排除项，否则数出来的
+不是「源码差异」而是构建产物/IDE 文件的差异：
+
+| 类别 | 条目 |
+|------|------|
+| 依赖 | `node_modules`、`.venv`、`venv` |
+| 构建产物 | `dist`、`dist-ssr`、`build`、`.dart_tool`、`.gradle`、`Pods`、`.symlinks`、`DerivedData`、`ephemeral`、`xcuserdata` |
+| 缓存 | `__pycache__`、`.pytest_cache`、`.mypy_cache`、`.ruff_cache`、`htmlcov`、`.coverage`、`.DS_Store`、`.dev-logs` |
+| 版本控制 | `.git` |
+| IDE | `.idea`、`.vscode`、`*.iml`、`*.tsbuildinfo` |
+| `.gitignore` 排除项 | `tests`、`data`、`uploads`、`.env`、`.env.local`、`pubspec.lock`、`local.properties`、`key.properties`、`Dev.xcconfig`、`Prod.xcconfig`、`Generated.xcconfig`、`flutter_export_environment.sh`、`GeneratedPluginRegistrant.{java,m,h}`、`.flutter-plugins`、`.flutter-plugins-dependencies`、`*.bak` |
+
+> **配套坑（已踩并修复）**：排除清单里含 `*.bak` 这类通配符时，`diff_exclude_args` 的展开
+> 若走未加引号的命令替换，展开结果会**再做一次 pathname expansion**，按当前工作目录把
+> `*.bak` 展开成实际文件名，于是 `diff` 只收到精确匹配的那一条排除，其余 `.bak` 文件重新
+> 被计入，且**静默失效不报错**。故统计差异的子 shell 内必须 `set -f` 关掉 pathname expansion：
+>
+> ```sh
+> n=$( ( set -f; diff -rq "$a" "$b" $(diff_exclude_args) 2>/dev/null ) | grep -c . || true)
+> ```
 
 ### 4.5 文档与验收脚本
 
 **文件**：`zg-tsp-docs/scripts/acceptance_check.py`
 
 新增一组自助改密断言：登录 → 改密 → 用新密码登录成功 → 用新密码可调业务接口 → 改回原密码。
+
+实施结果：作为**第 18 组**（18a–18g 共 7 条断言）加入 `acceptance_check.py`，全套 42/42 通过。
 
 **文件**：`zg-tsp-docs/sys_doc/PRD.md`
 
