@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { Alert, Button, Card, Form, Input, App } from 'antd'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 
 import { authApi } from '../../api/auth'
 import { ROLE_HOME, useAuthStore } from '../../store/auth'
@@ -13,6 +13,9 @@ export default function ChangePasswordPage() {
   const [error, setError] = useState<string | null>(null)
   const { user, setUser, logout } = useAuthStore()
   const navigate = useNavigate()
+  const location = useLocation()
+  // 入口通过 router state 传入来源页；无来源（如直接输 URL）时回退到角色首页
+  const from = (location.state as { from?: string } | null)?.from
   const { message } = App.useApp()
 
   const forced = user?.must_change_password === true
@@ -25,7 +28,7 @@ export default function ChangePasswordPage() {
       // 改密成功 → 解除强制标记，回到首页
       if (user) setUser({ ...user, must_change_password: false })
       message.success('密码修改成功')
-      navigate(user ? ROLE_HOME[user.role] : '/login', { replace: true })
+      navigate(from ?? (user ? ROLE_HOME[user.role] : '/login'), { replace: true })
     } catch (e) {
       setError(e instanceof Error ? e.message : '修改失败')
     } finally {
