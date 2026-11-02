@@ -189,11 +189,16 @@ wait_for_port() {
 # 统计差异时排除的路径（依赖 / 构建产物 / 缓存 / .gitignore 排除项）。
 # -x 按条目名匹配，对目录同样生效。
 diff_exclude_args() {
-  for x in .git node_modules dist build .dart_tool .gradle .venv \
-           __pycache__ .dev-logs .pytest_cache .idea .DS_Store \
-           tests data uploads Pods .symlinks DerivedData \
+  for x in .git node_modules dist dist-ssr build .dart_tool .gradle .venv venv \
+           __pycache__ .pytest_cache .mypy_cache .ruff_cache htmlcov .coverage \
+           .idea .vscode .DS_Store .dev-logs \
+           tests data uploads Pods .symlinks DerivedData ephemeral xcuserdata \
            .env .env.local pubspec.lock local.properties key.properties \
-           Dev.xcconfig Prod.xcconfig; do
+           Dev.xcconfig Prod.xcconfig Generated.xcconfig \
+           flutter_export_environment.sh GeneratedPluginRegistrant.java \
+           GeneratedPluginRegistrant.m GeneratedPluginRegistrant.h \
+           .flutter-plugins .flutter-plugins-dependencies \
+           '*.bak' '*.iml' '*.tsbuildinfo'; do
     printf -- '-x %s ' "$x"
   done
 }
@@ -202,15 +207,20 @@ diff_exclude_args() {
 count_diff_files() {
   local a="$1" b="$2" n
   [ -d "$a" ] && [ -d "$b" ] || { echo 0; return 0; }
+  # 排除清单里含 '*.bak' 之类的通配符，而 diff_exclude_args 的展开是
+  # 未加引号的命令替换 —— 展开结果会再经历一次 pathname expansion，
+  # 按当前工作目录把 '*.bak' 展开成实际文件名，于是 diff 只收到精确
+  # 匹配的那一条排除，其他 .bak 文件重新被计入，且**静默失效不报错**。
+  # 故在这个子 shell 内 set -f 关掉 pathname expansion。
   # shellcheck disable=SC2086
-  n=$(diff -rq "$a" "$b" $(diff_exclude_args) 2>/dev/null | grep -c . || true)
+  n=$( ( set -f; diff -rq "$a" "$b" $(diff_exclude_args) 2>/dev/null ) | grep -c . || true)
   [ -n "$n" ] || n=0
   echo "$n"
 }
 
 # 打印单个模块的 git 状态。
 report_module_git() {
-  local name="$1" dir="$2" branch head tracked untracked
+  local name="$1" dir="$2" branch head tracked untracked top st dircanon
   if [ ! -d "$dir" ]; then
     printf '    %-16s %s\n' "$name" "（目录不存在）"
     return 0
@@ -221,11 +231,31 @@ report_module_git() {
   fi
   branch=$(git -C "$dir" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "-")
   head=$(git -C "$dir" rev-parse --short HEAD 2>/dev/null || echo "-")
+  # git status 只调一次，两次 grep 分别数已跟踪 / 未跟踪。
+  # printf '%s\n' 在 $st 为空时产出一个空行，grep -c . 不计空行，计数仍正确。
+  st=$(git -C "$dir" status --porcelain 2>/dev/null || true)
   # grep -c 在无匹配时退出码为 1，用 || true 兜住（set -eu 下会直接退出脚本）
-  tracked=$(git -C "$dir" status --porcelain 2>/dev/null | grep -v '^??' | grep -c . || true)
-  untracked=$(git -C "$dir" status --porcelain 2>/dev/null | grep '^??' | grep -c . || true)
+  tracked=$(printf '%s\n' "$st" | grep -v '^??' | grep -c . || true)
+  untracked=$(printf '%s\n' "$st" | grep '^??' | grep -c . || true)
   [ -n "$tracked" ] || tracked=0
   [ -n "$untracked" ] || untracked=0
+
+  # 聚合快照形态下，zg-tsp-server/ 等不是独立 git 仓库，
+  # git -C 会向上找到聚合仓库根 —— 五个模块的 git 状态其实是同一份。
+  # 不标注的话读者会误以为「每个模块各有 N 个改动」。
+  # 五个模块都会命中同样的判定，故只标注一次（避免同一句话刷五行）。
+  if [ "${AGG_NOTE_SHOWN:-0}" != "1" ]; then
+    top=$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null || echo "")
+    if [ -n "$top" ]; then
+      top="$(cd "$top" 2>/dev/null && pwd)" || top=""
+      dircanon="$(cd "$dir" 2>/dev/null && pwd)" || dircanon=""
+      if [ -n "$top" ] && [ -n "$dircanon" ] && [ "$top" != "$dircanon" ]; then
+        printf '    ※ %s\n' "非独立仓库（聚合仓库形态）：以下各模块的 git 状态均取自同一个聚合仓库"
+        AGG_NOTE_SHOWN=1
+      fi
+    fi
+  fi
+
   if [ "$tracked" = "0" ] && [ "$untracked" = "0" ]; then
     printf '    %-16s %-8s %-10s %s\n' "$name" "$branch" "$head" "干净"
   else
@@ -241,6 +271,11 @@ report_source() {
   info "代码来源与新鲜度"
   printf '  REPOS_DIR = %s\n' "${REPOS_DIR}"
   printf '  命中来源 = %s\n' "${REPOS_SOURCE:-未知}"
+  # 显式指定的 REPOS_DIR 无效（路径打错 / 不完整）时会静默回落到默认探测，
+  # 而这正是本功能要根治的「跑的是哪份代码」类问题，必须明确告警。
+  if [ -n "${REPOS_DIR_ENV}" ] && [ "${REPOS_SOURCE}" != "环境变量 REPOS_DIR" ]; then
+    warn "你设置的 REPOS_DIR=${REPOS_DIR_ENV} 不存在或不完整，已回落到自动探测"
+  fi
   if [ "${REPOS_DIR}" != "${ROOT}" ]; then
     warn "当前跑的是独立仓库，与本快照 ${ROOT} 不同步"
     warn "改动请确认落在哪一份；构建本快照请显式指定 REPOS_DIR=\"\$PWD\""
@@ -249,6 +284,7 @@ report_source() {
   fi
 
   echo "  模块 git 状态："
+  AGG_NOTE_SHOWN=0
   for m in zg-tsp-server zg-tsp-web zg-tsp-android zg-tsp-ios zg-tsp-docs; do
     report_module_git "$m" "${REPOS_DIR}/${m}"
   done
