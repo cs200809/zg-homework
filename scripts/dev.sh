@@ -33,10 +33,18 @@ ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 # --- 定位仓库目录 ---
 # POSIX sh 没有数组，改用换行分隔的字符串逐行遍历。
+#
+# 注意：REPOS_DIR 的原始环境变量值单独存到 REPOS_DIR_ENV。
+# 本函数直接写全局变量 REPOS_DIR / REPOS_SOURCE 而非返回值 ——
+# 调用方若用命令替换接收，子 shell 里的赋值会丢失，拿不到来源信息。
+REPOS_DIR_ENV="${REPOS_DIR:-}"
+REPOS_DIR=""
+REPOS_SOURCE=""
+
 find_repos_dir() {
   local candidates
   candidates=$(printf '%s\n' \
-    "${REPOS_DIR:-}" \
+    "${REPOS_DIR_ENV}" \
     "${ROOT}/../zg-tsp-repos" \
     "${ROOT}" \
     "${HOME}/zg-tsp-repos"
@@ -46,7 +54,19 @@ find_repos_dir() {
   while IFS= read -r d; do
     [ -n "$d" ] || continue
     if [ -d "$d/zg-tsp-server" ] && [ -d "$d/zg-tsp-web" ]; then
-      echo "$d"
+      REPOS_DIR="$(cd "$d" && pwd)"
+      # 显式指定 REPOS_DIR 的优先标记为「环境变量」，
+      # 即使它恰好等于 $ROOT（也即"跑的就是本快照"）。
+      if [ -n "${REPOS_DIR_ENV}" ] && [ "$d" = "${REPOS_DIR_ENV}" ]; then
+        REPOS_SOURCE="环境变量 REPOS_DIR"
+      else
+        case "$d" in
+          "${ROOT}/../zg-tsp-repos") REPOS_SOURCE="默认探测 ../zg-tsp-repos" ;;
+          "${ROOT}")               REPOS_SOURCE="默认探测 本快照 \$ROOT" ;;
+          "${HOME}/zg-tsp-repos")  REPOS_SOURCE="默认探测 ~/zg-tsp-repos" ;;
+          *)                       REPOS_SOURCE="默认探测 未知位置" ;;
+        esac
+      fi
       return 0
     fi
   done <<EOF
@@ -55,7 +75,7 @@ EOF
   return 1
 }
 
-REPOS_DIR="$(find_repos_dir || true)"
+find_repos_dir || true
 if [ -z "$REPOS_DIR" ]; then
   echo "✗ 找不到五个仓库目录。"
   echo "  请设置 REPOS_DIR 环境变量，或确保 zg-tsp-server 与 zg-tsp-web 同级存在。"
@@ -162,6 +182,90 @@ wait_for_port() {
   err "${name} 启动超时（${timeout}s），查看日志：${LOG_DIR}/${name}.log"
   tail -n 15 "${LOG_DIR}/${name}.log" 2>/dev/null | sed 's/^/      /'
   return 1
+}
+
+# --- 代码来源与新鲜度报告 ---
+
+# 统计差异时排除的路径（依赖 / 构建产物 / 缓存 / .gitignore 排除项）。
+# -x 按条目名匹配，对目录同样生效。
+diff_exclude_args() {
+  for x in .git node_modules dist build .dart_tool .gradle .venv \
+           __pycache__ .dev-logs .pytest_cache .idea .DS_Store \
+           tests data uploads Pods .symlinks DerivedData \
+           .env .env.local pubspec.lock local.properties key.properties \
+           Dev.xcconfig Prod.xcconfig; do
+    printf -- '-x %s ' "$x"
+  done
+}
+
+# 统计两个目录之间的差异文件数（0 表示一致或不存在）。
+count_diff_files() {
+  local a="$1" b="$2" n
+  [ -d "$a" ] && [ -d "$b" ] || { echo 0; return 0; }
+  # shellcheck disable=SC2086
+  n=$(diff -rq "$a" "$b" $(diff_exclude_args) 2>/dev/null | grep -c . || true)
+  [ -n "$n" ] || n=0
+  echo "$n"
+}
+
+# 打印单个模块的 git 状态。
+report_module_git() {
+  local name="$1" dir="$2" branch head tracked untracked
+  if [ ! -d "$dir" ]; then
+    printf '    %-16s %s\n' "$name" "（目录不存在）"
+    return 0
+  fi
+  if ! git -C "$dir" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    printf '    %-16s %s\n' "$name" "（非 git 目录）"
+    return 0
+  fi
+  branch=$(git -C "$dir" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "-")
+  head=$(git -C "$dir" rev-parse --short HEAD 2>/dev/null || echo "-")
+  # grep -c 在无匹配时退出码为 1，用 || true 兜住（set -eu 下会直接退出脚本）
+  tracked=$(git -C "$dir" status --porcelain 2>/dev/null | grep -v '^??' | grep -c . || true)
+  untracked=$(git -C "$dir" status --porcelain 2>/dev/null | grep '^??' | grep -c . || true)
+  [ -n "$tracked" ] || tracked=0
+  [ -n "$untracked" ] || untracked=0
+  if [ "$tracked" = "0" ] && [ "$untracked" = "0" ]; then
+    printf '    %-16s %-8s %-10s %s\n' "$name" "$branch" "$head" "干净"
+  else
+    printf '    %-16s %-8s %-10s %s\n' "$name" "$branch" "$head" \
+      "${tracked} 个已跟踪改动 / ${untracked} 个未跟踪"
+  fi
+}
+
+# 打印整体报告。$1=full 时额外统计与本快照的差异文件数。
+report_source() {
+  local mode="${1:-short}" m n total=0
+  echo
+  info "代码来源与新鲜度"
+  printf '  REPOS_DIR = %s\n' "${REPOS_DIR}"
+  printf '  命中来源 = %s\n' "${REPOS_SOURCE:-未知}"
+  if [ "${REPOS_DIR}" != "${ROOT}" ]; then
+    warn "当前跑的是独立仓库，与本快照 ${ROOT} 不同步"
+    warn "改动请确认落在哪一份；构建本快照请显式指定 REPOS_DIR=\"\$PWD\""
+  else
+    ok "当前跑的就是本快照"
+  fi
+
+  echo "  模块 git 状态："
+  for m in zg-tsp-server zg-tsp-web zg-tsp-android zg-tsp-ios zg-tsp-docs; do
+    report_module_git "$m" "${REPOS_DIR}/${m}"
+  done
+
+  if [ "$mode" = "full" ] && [ "${REPOS_DIR}" != "${ROOT}" ]; then
+    echo "  与本快照的差异："
+    for m in zg-tsp-server zg-tsp-web zg-tsp-android zg-tsp-ios zg-tsp-docs; do
+      n=$(count_diff_files "${ROOT}/${m}" "${REPOS_DIR}/${m}")
+      total=$((total + n))
+      printf '    %-16s %s 处\n' "$m" "$n"
+    done
+    if [ "$total" -eq 0 ]; then
+      ok "与本快照完全一致"
+    else
+      warn "与本快照有 ${total} 处差异"
+    fi
+  fi
 }
 
 # --- 启动各模块 ---
@@ -476,6 +580,18 @@ mkdir -p "$LOG_DIR"
 # 因此清空动作推迟到 start_bg 真正拉起进程之前（见 start_bg）。
 
 CMD="${1:-start}"
+
+# 启动类命令打完整报告（含与快照差异），status 打简版。
+# stop / logs 不打印 —— 它们不启动任何模块，输出会变成噪音。
+case "${CMD}" in
+  start|server|web|ios|android|all|"")
+    report_source full
+    ;;
+  status)
+    report_source short
+    ;;
+esac
+
 case "${CMD}" in
   server)  start_server ;;
   web)     start_web ;;
