@@ -479,7 +479,7 @@ CREATE TABLE idiom_questions
 - 用户名+密码 → JWT（含 user_id、role）
 - admin 首次登录返回 `must_change_password: true`，未改密前其他接口 403
 - 被禁用用户登录返回 403
-- 登录之后可以自行修改当前账户密码
+- 登录之后可以自助修改当前账户密码 ✅（服务端契约已满足；Web 端右上角菜单 / 学生端「我的」页，移动端四角色「我的」页）
 
 **规则**
 
