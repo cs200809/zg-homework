@@ -5,7 +5,7 @@
  */
 import { Button, Card, Descriptions, Space, Tag, Typography } from 'antd'
 import { useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 
 import { post } from '../../api/client'
 import { useAuthStore } from '../../store/auth'
@@ -18,6 +18,7 @@ interface ClassInfo {
 
 export default function StudentProfile() {
   const navigate = useNavigate()
+  const location = useLocation()
   const user = useAuthStore((s) => s.user)
   const [klass, setKlass] = useState<ClassInfo | null>(null)
 
@@ -56,7 +57,11 @@ export default function StudentProfile() {
       </Card>
 
       <Card title="安全">
-        <Button onClick={() => navigate('/change-password')}>修改密码</Button>
+        <Button
+          onClick={() => navigate('/change-password', { state: { from: location.pathname } })}
+        >
+          修改密码
+        </Button>
       </Card>
     </Space>
   )

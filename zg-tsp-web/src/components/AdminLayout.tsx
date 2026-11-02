@@ -110,7 +110,8 @@ export default function AdminLayout() {
                   key: 'change-password',
                   icon: <KeyOutlined />,
                   label: '修改密码',
-                  onClick: () => navigate('/change-password'),
+                  onClick: () =>
+                    navigate('/change-password', { state: { from: location.pathname } }),
                 },
                 {
                   key: 'logout',
