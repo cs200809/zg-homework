@@ -12,6 +12,7 @@ import 'package:provider/provider.dart';
 
 import 'core/config.dart';
 import 'pages/admin/admin_home.dart';
+import 'pages/common/change_password_page.dart';
 import 'pages/common/login_page.dart';
 import 'pages/parent/parent_home.dart';
 import 'pages/student/student_home.dart';

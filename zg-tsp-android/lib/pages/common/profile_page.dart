@@ -6,7 +6,7 @@ import 'package:provider/provider.dart';
 
 import '../../state/auth_state.dart';
 import '../../widgets/common.dart';
-import 'login_page.dart';
+import 'change_password_page.dart';
 
 class ProfilePage extends StatelessWidget {
   const ProfilePage({super.key});
