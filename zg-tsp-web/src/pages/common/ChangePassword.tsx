@@ -1,4 +1,6 @@
-/** 修改密码页：admin 首登强制跳转至此（PRD 5.1）。 */
+/** 修改密码页：强制改密入口 + 主动修改入口（PRD 5.1）。
+ *
+ *  成功后回来源页（由入口通过 router state 传入），无来源时回退角色首页。 */
 
 import { useState } from 'react'
 import { Alert, Button, Card, Form, Input, App } from 'antd'
@@ -14,8 +16,10 @@ export default function ChangePasswordPage() {
   const { user, setUser, logout } = useAuthStore()
   const navigate = useNavigate()
   const location = useLocation()
-  // 入口通过 router state 传入来源页；无来源（如直接输 URL）时回退到角色首页
-  const from = (location.state as { from?: string } | null)?.from
+  // 入口通过 router state 传入来源页；无来源（如直接输 URL）时回退到角色首页。
+  // 只接受站内绝对路径，避免非法/外部地址被当成跳转目标。
+  const rawFrom = (location.state as { from?: string } | null)?.from
+  const from = rawFrom && rawFrom.startsWith('/') ? rawFrom : undefined
   const { message } = App.useApp()
 
   const forced = user?.must_change_password === true
@@ -25,7 +29,7 @@ export default function ChangePasswordPage() {
     setLoading(true)
     try {
       await authApi.changePassword(values.old_password, values.new_password)
-      // 改密成功 → 解除强制标记，回到首页
+      // 改密成功 → 解除强制标记，回到来源页（无来源时回退角色首页）
       if (user) setUser({ ...user, must_change_password: false })
       message.success('密码修改成功')
       navigate(from ?? (user ? ROLE_HOME[user.role] : '/login'), { replace: true })
