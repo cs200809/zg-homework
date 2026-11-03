@@ -213,7 +213,8 @@ diff_exclude_args() {
            '*.jks' '*.keystore' '*.p12' '*.mobileprovision' '*.cer' \
            '*.certSigningRequest' '*.framework' '*.podspec' \
            'GoogleService-Info.plist' 'Runner.entitlements.local' \
-           '.packages' '.pub' '.pub-cache' 'debug' 'profile' 'release'; do
+           '.packages' '.pub' '.pub-cache' 'debug' 'profile' 'release' \
+           gradlew gradlew.bat gradle-wrapper.jar; do
     printf -- '-x %s ' "$x"
   done
 }
