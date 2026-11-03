@@ -1,0 +1,5 @@
+# gradlew.bat 是 Windows 批处理脚本，必须保持 CRLF 行尾 ——
+# 仓库 core.autocrlf=input 会在入库时把 CRLF 规范成 LF，检出后 Windows 上
+# cmd.exe 对 LF 行尾的批处理支持不可靠。这里显式声明：入库仍规范成 LF
+# （保证跨平台 diff 干净），检出时强制还原为 CRLF。
+*.bat text eol=crlf

@@ -46,6 +46,11 @@ ios/Runner/Runner.entitlements.local
 
 # --- IDE / 系统 ---
 # IDE 工程文件（Flutter 工程结构已由 flutter create 生成，无需入库）
+# --- flutter create 生成的模板 widget 测试 ---
+# 它引用不存在的 MyApp（本工程根组件是 ZgTspApp），留着会让 flutter test 编译失败。
+# 真实测试见 test/config_test.dart。
+test/widget_test.dart
+
 *.iml
 
 .idea/
