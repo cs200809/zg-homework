@@ -28,8 +28,13 @@
 set -eu
 
 # $0 在 POSIX sh 下即为脚本路径，兼容 bash / dash / zsh。
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+#
+# 一律用 `pwd -P` 取**物理路径**：默认的 `pwd` 返回逻辑路径（含符号链接），
+# 当快照目录本身是软链接时，REPOS_DIR 与 ROOT 会因同一物理目录的两条路径
+# 而不相等 —— 明明跑的就是本快照，却被误报成「不同步」。
+# 这比没提示更糟：会让人养成忽略该警告的习惯。
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
+ROOT="$(cd "${SCRIPT_DIR}/.." && pwd -P)"
 
 # --- 定位仓库目录 ---
 # POSIX sh 没有数组，改用换行分隔的字符串逐行遍历。
@@ -54,7 +59,7 @@ find_repos_dir() {
   while IFS= read -r d; do
     [ -n "$d" ] || continue
     if [ -d "$d/zg-tsp-server" ] && [ -d "$d/zg-tsp-web" ]; then
-      REPOS_DIR="$(cd "$d" && pwd)"
+      REPOS_DIR="$(cd "$d" && pwd -P)"
       # 显式指定 REPOS_DIR 的优先标记为「环境变量」，
       # 即使它恰好等于 $ROOT（也即"跑的就是本快照"）。
       if [ -n "${REPOS_DIR_ENV}" ] && [ "$d" = "${REPOS_DIR_ENV}" ]; then
@@ -81,7 +86,7 @@ if [ -z "$REPOS_DIR" ]; then
   echo "  请设置 REPOS_DIR 环境变量，或确保 zg-tsp-server 与 zg-tsp-web 同级存在。"
   exit 1
 fi
-REPOS_DIR="$(cd "$REPOS_DIR" && pwd)"
+REPOS_DIR="$(cd "$REPOS_DIR" && pwd -P)"
 
 SERVER_PORT="${SERVER_PORT:-8000}"
 WEB_PORT="${WEB_PORT:-5173}"
@@ -188,6 +193,10 @@ wait_for_port() {
 
 # 统计差异时排除的路径（依赖 / 构建产物 / 缓存 / .gitignore 排除项）。
 # -x 按条目名匹配，对目录同样生效。
+#
+# 清单逐条对照五个模块的 .gitignore 补齐，尤其**签名/密钥类**
+# （*.jks / *.keystore / *.p12 / *.mobileprovision / *.cer 等）：
+# 漏掉它们不只是产生幽灵差异，更会让 diff 把私钥材料读进管道。
 diff_exclude_args() {
   for x in .git node_modules dist dist-ssr build .dart_tool .gradle .venv venv \
            __pycache__ .pytest_cache .mypy_cache .ruff_cache htmlcov .coverage \
@@ -199,12 +208,19 @@ diff_exclude_args() {
            GeneratedPluginRegistrant.m GeneratedPluginRegistrant.h \
            .flutter-plugins .flutter-plugins-dependencies \
            .vite .kotlin \
-           '*.bak' '*.iml' '*.tsbuildinfo'; do
+           '*.bak' '*.iml' '*.tsbuildinfo' '*.log' '*.py[cod]' '*.egg-info' \
+           '*.apk' '*.aab' '*.aar' '*.ipa' '*.app' '*.xcuserstate' \
+           '*.jks' '*.keystore' '*.p12' '*.mobileprovision' '*.cer' \
+           '*.certSigningRequest' '*.framework' '*.podspec' \
+           'GoogleService-Info.plist' 'Runner.entitlements.local' \
+           '.packages' '.pub' '.pub-cache' 'debug' 'profile' 'release'; do
     printf -- '-x %s ' "$x"
   done
 }
 
-# 统计两个目录之间的差异文件数（0 表示一致或不存在）。
+# 统计两个目录之间的差异**条目**数（0 表示一致或不存在）。
+# 注意：diff -rq 对「整目录只存在于一侧」只输出一行 `Only in DIR: name`，
+# 所以一个条目可能对应几十个文件 —— 这是「条目数」而非「文件数」。
 count_diff_files() {
   local a="$1" b="$2" n
   [ -d "$a" ] && [ -d "$b" ] || { echo 0; return 0; }
@@ -248,8 +264,12 @@ report_module_git() {
   if [ "${AGG_NOTE_SHOWN:-0}" != "1" ]; then
     top=$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null || echo "")
     if [ -n "$top" ]; then
-      top="$(cd "$top" 2>/dev/null && pwd)" || top=""
-      dircanon="$(cd "$dir" 2>/dev/null && pwd)" || dircanon=""
+      # 两边都规范成**物理路径**再比较：
+      # `git rev-parse --show-toplevel` 返回的是物理路径，
+      # 而 `pwd`（逻辑路径）在软链接下会与它不相等，
+      # 导致独立仓库形态被误标成「非独立仓库（聚合仓库形态）」。
+      top="$(cd "$top" 2>/dev/null && pwd -P)" || top=""
+      dircanon="$(cd "$dir" 2>/dev/null && pwd -P)" || dircanon=""
       if [ -n "$top" ] && [ -n "$dircanon" ] && [ "$top" != "$dircanon" ]; then
         printf '    ※ %s\n' "非独立仓库（聚合仓库形态）：以下各模块的 git 状态均取自同一个聚合仓库"
         AGG_NOTE_SHOWN=1
@@ -265,7 +285,7 @@ report_module_git() {
   fi
 }
 
-# 打印整体报告（含与本快照的差异文件数统计）。
+# 打印整体报告（含与本快照的差异条目数统计）。
 # 只有 REPOS_DIR 与 ROOT 不同时才有「差异」可谈 —— 跑的就是本快照时恒为 0。
 report_source() {
   local m n total=0
@@ -296,12 +316,12 @@ report_source() {
     for m in zg-tsp-server zg-tsp-web zg-tsp-android zg-tsp-ios zg-tsp-docs; do
       n=$(count_diff_files "${ROOT}/${m}" "${REPOS_DIR}/${m}")
       total=$((total + n))
-      printf '    %-16s %s 处\n' "$m" "$n"
+      printf '    %-16s %s 处（差异条目）\n' "$m" "$n"
     done
     if [ "$total" -eq 0 ]; then
       ok "与本快照完全一致"
     else
-      warn "与本快照有 ${total} 处差异"
+      warn "与本快照有 ${total} 处差异条目"
     fi
   fi
 }
@@ -623,7 +643,7 @@ CMD="${1:-start}"
 # 「现在跑的是哪份代码」是这套脚本要根治的问题，任何时候都该看得见。
 # stop / logs 不打印 —— 它们不启动任何模块，输出会变成噪音。
 case "${CMD}" in
-  start|server|web|ios|android|all|status|"")
+  start|server|web|ios|android|all|status)
     report_source
     ;;
 esac
@@ -639,7 +659,7 @@ case "${CMD}" in
   stop)    stop_all ;;
   status)  show_status ;;
   logs)    tail_logs ;;
-  ""|"start")
+  start)
     start_server && start_web
     ;;
   *)

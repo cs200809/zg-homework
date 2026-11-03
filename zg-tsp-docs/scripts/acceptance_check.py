@@ -284,7 +284,8 @@ def main() -> int:
     r = post(c, "/auth/change-password",
              {"old_password": old_pwd, "new_password": "12345"},
              token=tokens["student"])
-    check(r.get("code") == 400, "18b. 改密：新密码短于 6 位被拒",
+    check(r.get("code") == 400 and "at least 6 characters" in r.get("message", ""),
+          "18b. 改密：新密码短于 6 位被拒",
           f"code={r.get('code')} {r.get('message', '')}")
 
     # 18c. 新旧密码相同被拒

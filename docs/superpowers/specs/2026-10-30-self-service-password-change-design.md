@@ -102,7 +102,9 @@
 navigate('/change-password', { state: { from: location.pathname } })
 ```
 
-页面内取值：`const location = useLocation()`，`const from = (location.state as { from?: string } | null)?.from`。
+页面内取值：`const location = useLocation()`，
+`const rawFrom = (location.state as { from?: string } | null)?.from`，
+`const from = rawFrom && rawFrom.startsWith('/') ? rawFrom : undefined`（只接受站内绝对路径）。
 
 ### 4.3 移动端：改密页拆分
 
@@ -142,15 +144,15 @@ Android 与 iOS 两份**手工同步**（仓库无 CI 校验）。
     zg-tsp-web      main  7dd7ba6   干净
     zg-tsp-android  main  7dd7ba6   8 个已跟踪改动
     ...
-  与本快照的差异：server 12 处 / web 16 处 / android 8 处 / ios 8 处 / docs 6 处
+  与本快照的差异：server 12 处（差异条目） / web 16 处（差异条目） / android 8 处（差异条目） / ios 8 处（差异条目） / docs 6 处（差异条目）
 ```
 
 实现要点：
 
 1. **命中来源**：记录 `REPOS_DIR` 是来自环境变量还是默认探测（`../zg-tsp-repos` → `$ROOT` → `~/zg-tsp-repos`）
-2. **同步警告**：`REPOS_DIR != ROOT` 时显式提示"跑的不是本快照"
+2. **同步警告**：`REPOS_DIR != ROOT` 时显式提示"跑的不是本快照"。**两者都必须是物理路径**（`pwd -P`）：默认的 `pwd` 返回逻辑路径，快照目录本身是软链接时同一物理目录会得到两条不同路径，`REPOS_DIR != ROOT` 恒成立 —— 把「跑的就是本快照」误报成「不同步」，比没提示更糟（会让人养成忽略警告的习惯）
 3. **模块 git 状态**：对每个模块目录，若 `git -C <dir> rev-parse --is-inside-work-tree` 成功，输出分支、`HEAD` 短 hash、已跟踪改动数、未跟踪数；不是 git 目录则说明
-4. **与快照差异**：用 `diff -rq` 逐模块统计；仅在 `REPOS_DIR != ROOT` 且快照下五个模块都存在时统计
+4. **与快照差异**：用 `diff -rq` 逐模块统计**差异条目数**（`diff -rq` 对「整目录只存在于一侧」只输出一行 `Only in DIR: name`，故 1 个条目可能对应几十个文件 —— 是条目数而非文件数）；仅在 `REPOS_DIR != ROOT` 且快照下五个模块都存在时统计
 5. **POSIX `sh` 兼容**：不使用数组、`[[ ]]`、进程替换（与现有脚本约束一致）
 6. `status` 命令复用同一份报告
 
@@ -162,11 +164,13 @@ Android 与 iOS 两份**手工同步**（仓库无 CI 校验）。
 | 类别 | 条目 |
 |------|------|
 | 依赖 | `node_modules`、`.venv`、`venv` |
-| 构建产物 | `dist`、`dist-ssr`、`build`、`.dart_tool`、`.gradle`、`Pods`、`.symlinks`、`DerivedData`、`ephemeral`、`xcuserdata` |
+| 构建产物 | `dist`、`dist-ssr`、`build`、`.dart_tool`、`.gradle`、`.kotlin`、`Pods`、`.symlinks`、`DerivedData`、`ephemeral`、`xcuserdata`、`.vite` |
 | 缓存 | `__pycache__`、`.pytest_cache`、`.mypy_cache`、`.ruff_cache`、`htmlcov`、`.coverage`、`.DS_Store`、`.dev-logs` |
 | 版本控制 | `.git` |
 | IDE | `.idea`、`.vscode`、`*.iml`、`*.tsbuildinfo` |
 | `.gitignore` 排除项 | `tests`、`data`、`uploads`、`.env`、`.env.local`、`pubspec.lock`、`local.properties`、`key.properties`、`Dev.xcconfig`、`Prod.xcconfig`、`Generated.xcconfig`、`flutter_export_environment.sh`、`GeneratedPluginRegistrant.{java,m,h}`、`.flutter-plugins`、`.flutter-plugins-dependencies`、`*.bak` |
+| 签名/密钥类（**必须排除**） | `*.jks`、`*.keystore`、`*.p12`、`*.mobileprovision`、`*.cer`、`*.certSigningRequest`、`key.properties`、`*.podspec` |
+| 其它打包产物 | `*.apk`、`*.aab`、`*.aar`、`*.ipa`、`*.app`、`*.framework`、`*.xcuserstate`、`*.log`、`*.py[cod]`、`*.egg-info`、`*.iml`、`*.tsbuildinfo`、`GoogleService-Info.plist`、`Runner.entitlements.local`、`.packages`、`.pub`、`.pub-cache`、`debug`、`profile`、`release` |
 
 > **配套坑（已踩并修复）**：排除清单里含 `*.bak` 这类通配符时，`diff_exclude_args` 的展开
 > 若走未加引号的命令替换，展开结果会**再做一次 pathname expansion**，按当前工作目录把
