@@ -18,8 +18,10 @@ export default function ChangePasswordPage() {
   const location = useLocation()
   // 入口通过 router state 传入来源页；无来源（如直接输 URL）时回退到角色首页。
   // 只接受站内绝对路径，避免非法/外部地址被当成跳转目标。
+  // 额外排除 `//` 开头的协议相对 URL（`//evil.com`），它指向站外。
   const rawFrom = (location.state as { from?: string } | null)?.from
-  const from = rawFrom && rawFrom.startsWith('/') ? rawFrom : undefined
+  const from =
+    rawFrom && rawFrom.startsWith('/') && !rawFrom.startsWith('//') ? rawFrom : undefined
   const { message } = App.useApp()
 
   const forced = user?.must_change_password === true
