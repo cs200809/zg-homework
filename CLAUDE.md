@@ -268,6 +268,19 @@ lib/
 REPOS_DIR="$PWD" ./scripts/build.sh android dev
 ```
 
+`scripts/dev.sh` 现在会在启动前打印「代码来源与新鲜度报告」（REPOS_DIR 命中哪份代码、五模块 git 状态、与本快照的差异条目数），用它确认跑的是哪一份。
+
+## 独立仓库重建后的 Android 构建（gradlew 已入库）
+
+`scripts/split_repos.sh split` 用 `git subtree split` 重建 `../zg-tsp-repos/`，**被 `.gitignore` 排除的文件不会随重建带过去**。Android 侧的 gradle 包装器三件套已改为**入库**（`android/.gitignore` 移除了 `gradle-wrapper.jar` / `gradlew` / `gradlew.bat` 三行），所以独立仓库 clone 后 Android 构建开箱可用 —— 与 `gradle-wrapper.properties` 本就入库、且 `distributionUrl` 钉腾讯云镜像的做法一致。实测 `flutter create --platforms=android .` 不会改动已存在的这三个文件，不会来回冲突。
+
+仍需 `flutter pub get` 生成的（被 gitignore，属正常）：`.flutter-plugins-dependencies`、`android/app/src/main/java/io/flutter/plugins/GeneratedPluginRegistrant.java`。
+
+两个 `flutter create` 的副作用要留意：
+
+- 它生成的 `test/widget_test.dart` 引用不存在的 `MyApp`（本工程根组件是 `ZgTspApp`），**留着会让 `flutter test` 编译失败**。两端 `.gitignore` 都已加 `test/widget_test.dart`，但文件已存在于工作区时需手动删除。
+- 它触发的 `pub get` 会升级传递依赖（如 `image_picker_ios` 0.8.13+13→+14），与工程改动无关，用 `git checkout -- pubspec.lock` 还原。
+
 ## Git 约定
 
 - 主分支 `main`。五个独立仓库通过 `git subtree split --prefix=<模块>` 拆出，历史保留在 `split/<模块>` 分支（当前本地无这些分支，需 `split_repos.sh split` 重新生成）。
