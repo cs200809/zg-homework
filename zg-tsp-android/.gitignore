@@ -18,6 +18,7 @@ pubspec.lock          # 应用工程通常不提交 lock
 
 # --- Android 原生 ---
 android/.gradle/
+android/.kotlin/                # Gradle Kotlin DSL 会话缓存
 android/local.properties        # 含本机 SDK 路径
 android/app/debug/
 android/app/profile/

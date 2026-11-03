@@ -198,6 +198,7 @@ diff_exclude_args() {
            flutter_export_environment.sh GeneratedPluginRegistrant.java \
            GeneratedPluginRegistrant.m GeneratedPluginRegistrant.h \
            .flutter-plugins .flutter-plugins-dependencies \
+           .vite .kotlin \
            '*.bak' '*.iml' '*.tsbuildinfo'; do
     printf -- '-x %s ' "$x"
   done
@@ -264,9 +265,10 @@ report_module_git() {
   fi
 }
 
-# 打印整体报告。$1=full 时额外统计与本快照的差异文件数。
+# 打印整体报告（含与本快照的差异文件数统计）。
+# 只有 REPOS_DIR 与 ROOT 不同时才有「差异」可谈 —— 跑的就是本快照时恒为 0。
 report_source() {
-  local mode="${1:-short}" m n total=0
+  local m n total=0
   echo
   info "代码来源与新鲜度"
   printf '  REPOS_DIR = %s\n' "${REPOS_DIR}"
@@ -289,7 +291,7 @@ report_source() {
     report_module_git "$m" "${REPOS_DIR}/${m}"
   done
 
-  if [ "$mode" = "full" ] && [ "${REPOS_DIR}" != "${ROOT}" ]; then
+  if [ "${REPOS_DIR}" != "${ROOT}" ]; then
     echo "  与本快照的差异："
     for m in zg-tsp-server zg-tsp-web zg-tsp-android zg-tsp-ios zg-tsp-docs; do
       n=$(count_diff_files "${ROOT}/${m}" "${REPOS_DIR}/${m}")
@@ -617,14 +619,12 @@ mkdir -p "$LOG_DIR"
 
 CMD="${1:-start}"
 
-# 启动类命令打完整报告（含与快照差异），status 打简版。
+# 启动类命令与 status 都打完整报告（含与快照差异）——
+# 「现在跑的是哪份代码」是这套脚本要根治的问题，任何时候都该看得见。
 # stop / logs 不打印 —— 它们不启动任何模块，输出会变成噪音。
 case "${CMD}" in
-  start|server|web|ios|android|all|"")
-    report_source full
-    ;;
-  status)
-    report_source short
+  start|server|web|ios|android|all|status|"")
+    report_source
     ;;
 esac
 

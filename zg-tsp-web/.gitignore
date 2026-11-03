@@ -16,3 +16,7 @@ npm-debug.log*
 # TypeScript 增量构建缓存
 tsconfig.tsbuildinfo
 *.tsbuildinfo
+
+# Vite 依赖预打包缓存（cacheDir，位置随 node_modules 是否存在而变）
+.vite/
+node_modules/.vite/
