@@ -811,6 +811,30 @@ def set_rule(client, admin_token, db):
 
 
 @pytest.fixture
+def seed_review_rules(db):
+    """确保档位表里有 90→5 / 80→3 / 60→1 三档种子。
+
+    这些用例断言具体的档位积分值，因此档位必须存在且值正确。
+    迁移脚本已写入种子，此夹具是兜底（迁移未跑或种子被改动时）。
+    """
+    from app.db.repo import Repo
+    from app.models.entities import HomeworkReviewRule
+
+    repo = Repo(db)
+    for min_score, points in [(90, 5), (80, 3), (60, 1)]:
+        rule = repo.get_review_rule_by_min_score(min_score)
+        if rule is None:
+            repo.add_review_rule(
+                HomeworkReviewRule(min_score=min_score, points=points, enabled=True)
+            )
+        else:
+            rule.points = points
+            rule.enabled = True
+    db.commit()
+    db.expire_all()
+
+
+@pytest.fixture
 def klass_with_student(make_class, make_user, db):
     """(班级, 班主任, 班主任密码, 学生, 学生密码)"""
     klass, teacher, tpw = make_class("批改班")
@@ -821,8 +845,11 @@ def klass_with_student(make_class, make_user, db):
 
 
 @pytest.fixture
-def submitted_homework(client, login, klass_with_student, set_rule):
-    """老师布置作业、学生已提交，返回 (homework_id, 老师token, 学生对象, 学生token)。"""
+def submitted_homework(client, login, klass_with_student, set_rule, seed_review_rules):
+    """老师布置作业、学生已提交，返回 (homework_id, 老师token, 学生对象, 学生token)。
+
+    依赖 `seed_review_rules` 保证档位表有 90→5 / 80→3 / 60→1 三档。
+    """
     set_rule("homework_on_time", points=10, daily_limit=None, enabled=True)
     klass, teacher, tpw, student, spw = klass_with_student
 
@@ -872,8 +899,6 @@ def test_review_scores_and_writes_comment(client, login, submitted_homework, ref
 def test_review_reviewed_at_and_by_set(client, login, submitted_homework, refresh, db):
     """批改后写入批改时间与批改人。"""
     hw_id, teacher_token, student, _ = submitted_homework
-    teacher = Repo(db).get_user_by_id(student.id)  # 占位，下面用 records 接口核对
-    del teacher
 
     post(
         client,
@@ -1141,26 +1166,6 @@ def test_student_sees_review_result(client, login, submitted_homework):
     assert rec["reviewed_at"] is not None
 ```
 
-**注意**：`test_review_reviewed_at_and_by_set` 里有一行无用的占位代码（`teacher = Repo(db).get_user_by_id(student.id)` / `del teacher`），实现时删掉它，改成：
-
-```python
-def test_review_reviewed_at_and_by_set(client, login, submitted_homework, refresh, db):
-    """批改后写入批改时间与批改人。"""
-    hw_id, teacher_token, student, _ = submitted_homework
-
-    post(
-        client,
-        "/homework/review",
-        {"homework_id": hw_id, "student_id": student.id, "score": 85},
-        token=teacher_token,
-    )
-
-    refresh()
-    rec = Repo(db).get_homework_record(hw_id, student.id)
-    assert rec.reviewed_at is not None
-    assert rec.reviewed_by is not None
-```
-
 - [ ] **Step 2: 跑测试确认失败**
 
 Run:
@@ -1382,6 +1387,7 @@ def post(client, path, body=None, token=None):
 def seed_rules(db):
     """确保库里有 90/80/60 三档种子，返回 (min_score -> points) 字典。"""
     from app.db.repo import Repo
+    from app.models.entities import HomeworkReviewRule
 
     repo = Repo(db)
     result = {}
@@ -1389,9 +1395,7 @@ def seed_rules(db):
         rule = repo.get_review_rule_by_min_score(min_score)
         if rule is None:
             rule = repo.add_review_rule(
-                __import__("app.models.entities", fromlist=["HomeworkReviewRule"]).HomeworkReviewRule(
-                    min_score=min_score, points=points, enabled=True
-                )
+                HomeworkReviewRule(min_score=min_score, points=points, enabled=True)
             )
             db.commit()
         result[min_score] = rule.points
@@ -1459,10 +1463,24 @@ def test_create_rule_negative_points_rejected(client, admin_token, seed_rules):
 
 
 def test_update_rule_points(client, admin_token, seed_rules, db):
-    """admin 可改档位积分。"""
-    from app.db.repo import Repo
+    """admin 可改档位积分。
 
-    rule = Repo(db).get_review_rule_by_min_score(90)
+    用**非种子档位**（95 分）做修改，避免污染 90/80/60 三档种子 ——
+    Task 4 的批改测试断言 90 分 = +5 分，改了种子会让它失败。
+    """
+    from app.db.repo import Repo
+    from app.models.entities import HomeworkReviewRule
+
+    repo = Repo(db)
+    rule = repo.get_review_rule_by_min_score(95)
+    if rule is None:
+        rule = repo.add_review_rule(
+            HomeworkReviewRule(min_score=95, points=9, enabled=True)
+        )
+        db.commit()
+        db.expire_all()
+        rule = repo.get_review_rule_by_min_score(95)
+
     r = post(
         client,
         "/admin/homework-review-rules/update",
@@ -1474,10 +1492,23 @@ def test_update_rule_points(client, admin_token, seed_rules, db):
 
 
 def test_update_rule_disable(client, admin_token, seed_rules, db):
-    """admin 可停用档位。"""
-    from app.db.repo import Repo
+    """admin 可停用档位。
 
-    rule = Repo(db).get_review_rule_by_min_score(80)
+    同样用非种子档位（85 分），避免停用 80 档影响其他测试的匹配结果。
+    """
+    from app.db.repo import Repo
+    from app.models.entities import HomeworkReviewRule
+
+    repo = Repo(db)
+    rule = repo.get_review_rule_by_min_score(85)
+    if rule is None:
+        rule = repo.add_review_rule(
+            HomeworkReviewRule(min_score=85, points=2, enabled=True)
+        )
+        db.commit()
+        db.expire_all()
+        rule = repo.get_review_rule_by_min_score(85)
+
     r = post(
         client,
         "/admin/homework-review-rules/update",
@@ -1500,10 +1531,23 @@ def test_update_rule_not_found(client, admin_token, seed_rules):
 
 
 def test_disabled_rule_not_matched(client, admin_token, seed_rules, db, refresh):
-    """停用的档位不参与匹配。"""
-    from app.db.repo import Repo
+    """停用的档位不参与匹配。
 
-    rule = Repo(db).get_review_rule_by_min_score(90)
+    用非种子档位（95 分）验证：停用后 95 分落到 90 档（5 分），而非 95 档。
+    """
+    from app.db.repo import Repo
+    from app.models.entities import HomeworkReviewRule
+
+    repo = Repo(db)
+    rule = repo.get_review_rule_by_min_score(95)
+    if rule is None:
+        rule = repo.add_review_rule(
+            HomeworkReviewRule(min_score=95, points=9, enabled=True)
+        )
+        db.commit()
+        db.expire_all()
+        rule = repo.get_review_rule_by_min_score(95)
+
     post(
         client,
         "/admin/homework-review-rules/update",
@@ -1511,7 +1555,8 @@ def test_disabled_rule_not_matched(client, admin_token, seed_rules, db, refresh)
         token=admin_token,
     )
     db.expire_all()
-    assert Repo(db).match_review_points(95) == 3  # 落到 80 档
+    # 95 分不再命中已停用的 95 档，落到 90 档
+    assert Repo(db).match_review_points(95) == 5
 ```
 
 - [ ] **Step 2: 跑测试确认失败**
@@ -1717,6 +1762,19 @@ export type PointType = 'checkin' | 'homework' | 'reading' | 'game' | 'consume' 
 
 ```typescript
   /** 老师批改分数 0–100；null/undefined 表示未批改 */
+  review_score?: number | null
+  /** 老师评语 */
+  review_comment?: string | null
+  /** 批改时间 */
+  reviewed_at?: string | null
+  /** 实际已发放的批改积分 */
+  review_points?: number
+```
+
+在 `HomeworkRecord` 接口（第 65 行，学生端 `my_record` 用的类型）的 `suspicious: boolean` 之后追加**同样的四个字段**：
+
+```typescript
+  /** 老师批改分数 0–100；null 表示未批改 */
   review_score?: number | null
   /** 老师评语 */
   review_comment?: string | null
@@ -2335,21 +2393,7 @@ git commit -m "feat: Web 端老师端批改 —— 完成情况页批改列 + �
 import { Alert, App, Button, Card, Descriptions, Result, Space, Spin, Statistic, Tag, Upload } from 'antd'
 ```
 
-**注意**：`rec.reviewed_at` 与 `rec.review_score` 需要 `Homework` 类型的 `my_record` 支持——`types.ts` 里 `Homework.my_record` 的类型是 `{ duration_seconds: number; finished: boolean; points: number } | null`，需在 Task 6 中一并扩展为：
-
-```typescript
-  my_record?: {
-    duration_seconds: number
-    finished: boolean
-    points: number
-    review_score?: number | null
-    review_comment?: string | null
-    reviewed_at?: string | null
-    review_points?: number
-  } | null
-```
-
-若 Task 6 已完成此项则跳过；未完成则在此补上并单独提交。
+**注意**：`rec.reviewed_at` 与 `rec.review_score` 的类型支持由 Task 6 负责 —— `Homework.my_record` 的类型是 `HomeworkRecord | null`，Task 6 已给 `HomeworkRecord` 接口补上 `review_score` / `review_comment` / `reviewed_at` / `review_points` 四个字段。若本步骤编译报「属性不存在」，说明 Task 6 未完成，先回去补。
 
 - [ ] **Step 2: admin 端加档位配置 Card**
 
