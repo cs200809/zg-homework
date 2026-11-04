@@ -99,6 +99,8 @@ export const articleApi = {
       article: Article
       records: {
         student_id: number
+        /** 学生姓名：昵称优先，回落用户名 */
+        student_name: string | null
         duration_seconds: number
         finished: boolean
         points: number

@@ -56,6 +56,13 @@ def _not_found(message: str) -> HTTPException:
     return HTTPException(status_code=404, detail={"code": CODE_NOT_FOUND, "message": message})
 
 
+def _student_name(u: User | None) -> str | None:
+    """学生展示名：优先昵称，回落用户名，都没有则返回 None。"""
+    if u is None:
+        return None
+    return u.nickname or u.username
+
+
 def _article_to_dict(a: Article, with_content: bool = True) -> dict:
     d = {
         "id": a.id,
@@ -448,11 +455,13 @@ async def article_records(
         raise _forbidden("只能查看自己发布的文章")
 
     records = repo.list_reading_records(art.id)
+    students = repo.list_users_by_ids(sorted({r.student_id for r in records}))
     return ok({
         "article": _article_to_dict(art, with_content=False),
         "records": [
             {
                 "student_id": r.student_id,
+                "student_name": _student_name(students.get(r.student_id)),
                 "duration_seconds": r.duration_seconds,
                 "finished": bool(r.finished),
                 "points": r.points,

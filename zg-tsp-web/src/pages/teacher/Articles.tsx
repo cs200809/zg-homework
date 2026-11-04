@@ -19,6 +19,12 @@ import { fileUrl } from '../../api/client'
 import { articleApi } from '../../api/student'
 import type { Article, ArticleStats } from '../../api/types'
 
+/** 文章标题展示：标题本身可能已带书名号，避免出现「《《咏鹅》》」。 */
+function displayTitle(title: string): string {
+  const t = title.trim()
+  return /^《.*》$/.test(t) ? t : `《${t}》`
+}
+
 export default function TeacherArticles() {
   const { message } = App.useApp()
   const [form] = Form.useForm()
@@ -81,7 +87,7 @@ export default function TeacherArticles() {
       const r = await articleApi.records(article.id)
       const s: ArticleStats = r.stats
       Modal.info({
-        title: `《${article.title}》阅读统计`,
+        title: `${displayTitle(article.title)} 阅读统计`,
         content: (
           <div>
             <p>阅读人数：{s.reader_count}</p>
@@ -94,7 +100,12 @@ export default function TeacherArticles() {
               dataSource={r.records}
               locale={{ emptyText: '暂无阅读记录' }}
               columns={[
-                { title: '学生ID', dataIndex: 'student_id' },
+                {
+                  title: '学生姓名',
+                  dataIndex: 'student_name',
+                  render: (v: string | null, r) => v || `学生${r.student_id}`,
+                },
+                { title: '学生ID', dataIndex: 'student_id', width: 90 },
                 {
                   title: '时长(分)',
                   dataIndex: 'duration_seconds',
