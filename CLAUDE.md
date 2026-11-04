@@ -41,6 +41,15 @@ uvicorn app.main:app --host 127.0.0.1 --port 8000
 
 `.env` 路径基于 `app/config.py` 向上两级，不依赖 CWD；环境变量优先级高于 `.env`。
 
+**部署用数据库初始化（顶层脚本，不进服务端 venv）**：
+
+```bash
+./scripts/init.sh            # 建库 + 建表 + 积分规则 + admin（幂等）
+./scripts/init.sh --drop     # 先删库重建（危险，需二次确认）
+```
+
+它导入 `zg-tsp-docs/sql/init.sql` —— 该文件由 `python -m app.seed.export_ddl` **从 ORM 生成**（改了 `app/models/entities.py` 要重新生成）。admin 密码以 `__ADMIN_BCRYPT_HASH__` 占位符写入，由脚本运行时替换成 bcrypt 哈希；**直接 `mysql < init.sql` 会导致 admin 无法登录**。
+
 **健康检查是 POST，不是 GET**：`curl -X POST http://127.0.0.1:8000/health` → `{"code":0,"message":"ok","data":{"status":"ok"}}`。浏览器直接打开会 405（CORS `allow_methods` 只放行 `POST, OPTIONS`）。
 
 测试（**需要可连的 MySQL**，不 mock、不用 sqlite）：
