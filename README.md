@@ -72,6 +72,21 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 
 健康检查：`POST /health` → `{"code":0,"message":"ok","data":{"status":"ok"}}`
 
+### 部署用数据库初始化
+
+部署到空机器时，一条命令完成「建库 → 建 14 张表 → 写积分规则 → 建 admin」：
+
+```bash
+./scripts/init.sh              # 幂等，可重复执行
+./scripts/init.sh --drop       # 先删库重建（危险，需二次确认）
+```
+
+它导入的是 `zg-tsp-docs/sql/init.sql` —— 该文件由 `python -m app.seed.export_ddl`
+从 ORM 生成，含全部表的中文 COMMENT。admin 初始密码取 `ADMIN_INIT_PASSWORD`
+环境变量，未设则随机生成并打印一次，首登强制改密。
+
+需要联调数据（测试账号、班级、成语题库）时，另跑 `python -m app.seed.initial_data`。
+
 ## 功能范围
 
 **四角色**（admin / teacher / student / parent）× **两平台**（移动端 + Web）全覆盖。

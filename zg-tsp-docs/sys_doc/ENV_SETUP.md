@@ -495,7 +495,55 @@ grep key.properties zg-tsp-android/android/.gitignore
 
 ---
 
-## 7. 完整验证流程
+## 7. 数据库初始化（服务端）
+
+部署到空机器时，先把数据库建起来。一条命令完成
+「建库 → 建 14 张表 → 写积分规则种子 → 创建 admin 账户」：
+
+```bash
+./scripts/init.sh              # 幂等，可重复执行
+./scripts/init.sh --drop       # 先删库重建（危险，需二次确认）
+```
+
+脚本从 `zg-tsp-server/.env` 的 `DATABASE_URL` 解析连接信息
+（也可用 `MYSQL_HOST` / `MYSQL_PORT` / `MYSQL_USER` / `MYSQL_PASSWORD` /
+`MYSQL_DATABASE` 覆盖），并按 `dev.sh` 相同的顺序探测仓库目录。
+
+### 两条初始化路径的区别
+
+| | `scripts/init.sh` | `python -m app.seed.initial_data` |
+|---|---|---|
+| 建表方式 | 导入 `zg-tsp-docs/sql/init.sql` | SQLAlchemy `create_all()` |
+| 数据内容 | 建表 + 10 条积分规则 + admin | 建表 + 积分规则 + admin + 班级 + 4 个测试账号 + 家长绑定 + 成语题库 |
+| 适用场景 | 部署 / 生产 | 本地开发联调 |
+| 密码来源 | `ADMIN_INIT_PASSWORD`，未设则随机生成并打印 | 同左 |
+
+两者可共存：先跑 `init.sh`，需要联调数据再跑 `initial_data`
+（它对已存在的表幂等，只补种子）。
+
+### 建表 SQL 的来源
+
+`zg-tsp-docs/sql/init.sql` 由 `python -m app.seed.export_ddl` **从 ORM 生成**，
+不要手工编辑。权威来源是 `zg-tsp-server/app/models/entities.py`（14 张表）——
+**不是**本仓库 PRD 第 4.1 节，后者是 SQLite 方言，与服务端实际跑的 MySQL 8 不符。
+
+改了 ORM 的字段后重新生成：
+
+```bash
+cd zg-tsp-server && python -m app.seed.export_ddl
+```
+
+### 两处需要注意的地方
+
+1. **admin 密码以占位符写入**。`init.sql` 里 admin 的 `password_hash` 是
+   `__ADMIN_BCRYPT_HASH__`，由 `init.sh` 在运行时替换成实际 bcrypt 哈希。
+   直接用 `mysql < init.sql` 导入会导致 admin **无法登录**。
+2. **admin 已存在时不会被覆盖**。重复执行 `init.sh` 不会把运维改过的密码打回
+   原形，也不会重置 `must_change_password`。
+
+---
+
+## 8. 完整验证流程
 
 环境装齐后按顺序执行：
 
@@ -521,7 +569,7 @@ ls -lh dist/
 
 ---
 
-## 8. 常见问题
+## 9. 常见问题
 
 **Q：`flutter doctor` 报「CocoaPods not installed」但明明装了 pod**
 
@@ -612,7 +660,7 @@ cat ~/.config/flutter/settings   # 查看当前所有 Flutter 配置
 
 ---
 
-## 9. 参考
+## 10. 参考
 
 - Flutter iOS 部署：<https://docs.flutter.dev/deployment/ios>
 - Flutter Android 部署：<https://docs.flutter.dev/deployment/android>
