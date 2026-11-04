@@ -201,13 +201,24 @@ delta == 0 → 不动积分，仅更新分数与评语
     ② SELECT ... FOR UPDATE 锁定 homework_records 行
     ③ 校验 submit_time 非空
     ④ target = 匹配档位(score)；granted = record.review_points；delta = target - granted
-    ⑤ delta>0 → award_amount(delta, type='review')
-       delta<0 → 实扣 = deduct_amount(|delta|) 扣至余额为 0；review_points -= 实扣
-       delta==0 → 不动
-    ⑥ 更新 review_score / review_comment / reviewed_at / reviewed_by / review_points
+    ⑤ delta>0 → awarded = award_amount(delta, type='review')
+       delta<0 → awarded = -deduct_amount(|delta|, type='review')，扣至余额为 0
+       delta==0 → awarded = 0
+       其中 awarded 是**实际净变动**（正=实发，负=实扣）
+    ⑥ review_points = granted + awarded
+       更新 review_score / review_comment / reviewed_at / reviewed_by
     ⑦ commit
   → 返回 {record, points_delta, awarded_points}
 ```
+
+**两个返回字段的语义**：
+
+| 字段 | 含义 |
+|------|------|
+| `points_delta` | 目标差额（`target - granted`）。正=应补发，负=应回扣。**规则层面**的差额，与学生余额无关 |
+| `awarded_points` | 实际积分**净变动**。正=实发，负=实扣。余额不足时其绝对值小于 `|points_delta|` |
+
+举例：首次批 90 分发 5 分（`review_points=5`），学生花到只剩 2 分，改成 60 分 → `points_delta = 1 - 5 = -4`（应扣 4），但余额只有 2 → `awarded_points = -2`（实扣 2），`review_points = 5 + (-2) = 3`。
 
 ### 4.7 响应字段扩展
 
@@ -248,6 +259,7 @@ def deduct_amount(
     db: Session,
     student_id: int,
     amount: int,
+    type_: str,
     remark: str | None = None,
     operator_id: int | None = None,
 ) -> int:
