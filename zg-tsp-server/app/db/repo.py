@@ -44,6 +44,13 @@ class Repo:
     def get_user_by_username(self, username: str) -> User | None:
         return self.db.scalar(select(User).where(User.username == username))
 
+    def list_users_by_ids(self, user_ids: list[int]) -> dict[int, User]:
+        """批量取用户，返回 {user_id: User}（阅读记录等场景要展示学生姓名）。"""
+        if not user_ids:
+            return {}
+        users = self.db.scalars(select(User).where(User.id.in_(user_ids)))
+        return {u.id: u for u in users}
+
     def list_users(self) -> list[User]:
         return list(self.db.scalars(select(User).order_by(User.id)))
 
