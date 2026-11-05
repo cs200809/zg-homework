@@ -577,7 +577,7 @@ git commit -m "feat: 积分服务新增 award_amount / deduct_amount —— 支�
 **Interfaces:**
 - Consumes: `HomeworkReviewRule` 实体、`HomeworkRecord` 新字段
 - Produces:
-  - `Repo.list_review_rules() -> list[HomeworkReviewRule]` —— 按 min_score 升序
+  - `Repo.list_review_rules() -> list[HomeworkReviewRule]` —— 按 min_score **降序**（从高到低，与 Task 5 的 admin 接口 docstring 一致）
   - `Repo.get_review_rule_by_min_score(min_score: int) -> HomeworkReviewRule | None`
   - `Repo.add_review_rule(rule: HomeworkReviewRule) -> HomeworkReviewRule`
   - `Repo.match_review_points(score: int) -> int` —— 匹配档位返回积分，无匹配返回 0
