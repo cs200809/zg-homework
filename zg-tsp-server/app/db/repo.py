@@ -16,6 +16,7 @@ from app.models.entities import (
     Class,
     Homework,
     HomeworkRecord,
+    HomeworkReviewRule,
     ParentStudent,
     PointLog,
     PointRule,
@@ -249,6 +250,18 @@ class Repo:
                 HomeworkRecord.submit_time.isnot(None),
             )
         ) or 0
+
+    # ---------------- 作业批改档位（PRD 5.3） ----------------
+
+    def add_review_rule(self, rule: HomeworkReviewRule) -> HomeworkReviewRule:
+        self.db.add(rule)
+        self.db.flush()
+        return rule
+
+    def get_review_rule_by_min_score(self, min_score: int) -> HomeworkReviewRule | None:
+        return self.db.scalar(
+            select(HomeworkReviewRule).where(HomeworkReviewRule.min_score == min_score)
+        )
 
     # ---------------- 签到（PRD 5.4） ----------------
 

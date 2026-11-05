@@ -5,6 +5,10 @@
 
 本脚本**幂等**：已存在的列/表/索引/种子直接跳过，可重复执行。
 
+**注意：DDL 不是原子的。** MySQL 的 DDL 会隐式提交，`engine.begin()` 的事务
+边界保护不了 DDL —— 中途失败会留下「一半」的表结构（例如列已加但种子没写）。
+本脚本靠幂等性来兜底：**中断后直接重跑一次**即可补齐剩余部分。
+
 用法：
     python -m app.seed.migrate_homework_review
     python -m app.seed.migrate_homework_review --check   # 只检查不修改
@@ -15,6 +19,9 @@ import argparse
 from sqlalchemy import text
 
 from app.db.session import engine
+
+# 档位种子复用 initial_data 的定义，避免三处（迁移脚本 / initial_data / init.sql）漂移
+from app.seed.initial_data import DEFAULT_REVIEW_RULES  # noqa: E402  (避免循环导入放最后)
 
 # (列名, MySQL 列定义)
 NEW_COLUMNS = [
@@ -35,17 +42,17 @@ NEW_INDEXES = [
     ("ix_homework_records_pending", "homework_id, reviewed_at"),
 ]
 
-# (min_score, points) 种子档位
-SEED_RULES = [(90, 5), (80, 3), (60, 1)]
+# (min_score, points) 种子档位 —— 与 initial_data.DEFAULT_REVIEW_RULES 同源
+SEED_RULES = DEFAULT_REVIEW_RULES
 
 CREATE_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS homework_review_rules (
-    id          INTEGER      NOT NULL AUTO_INCREMENT,
-    min_score   INTEGER      NOT NULL,
-    points      INTEGER      NOT NULL DEFAULT 0,
-    enabled     TINYINT(1)   NOT NULL DEFAULT 1,
-    updated_by  INTEGER      NULL,
-    updated_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    id          INTEGER      NOT NULL AUTO_INCREMENT COMMENT '档位ID',
+    min_score   INTEGER      NOT NULL COMMENT '档位分数下限（含）',
+    points      INTEGER      NOT NULL DEFAULT 0 COMMENT '该档位发放的积分',
+    enabled     TINYINT(1)   NOT NULL DEFAULT 1 COMMENT '是否启用；false 则跳过该档',
+    updated_by  INTEGER      NULL COMMENT '最后修改人（admin）ID',
+    updated_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '最后修改时间',
     PRIMARY KEY (id),
     UNIQUE KEY uq_homework_review_rules_min_score (min_score),
     CONSTRAINT fk_homework_review_rules_updated_by FOREIGN KEY (updated_by) REFERENCES users (id)
@@ -101,6 +108,11 @@ def _existing_min_scores(conn) -> set[int]:
 
 def main(check_only: bool = False) -> None:
     with engine.begin() as conn:
+        # 前置校验：homework_records 不存在时 ALTER 会抛原始驱动错误，
+        # 信息量太低，这里提前给出可操作的提示。
+        if not _table_exists(conn, "homework_records"):
+            raise RuntimeError("表 homework_records 不存在，请先建表")
+
         existing = _existing_columns(conn)
         added: list[str] = []
         for name, ddl in NEW_COLUMNS:

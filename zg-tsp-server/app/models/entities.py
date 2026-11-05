@@ -20,6 +20,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -145,7 +146,7 @@ class HomeworkRecord(Base):
     review_comment: Mapped[str | None] = mapped_column(Text, comment="老师评语")
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, comment="批改时间")
     reviewed_by: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.id"), comment="批改老师用户ID")
-    review_points: Mapped[int] = mapped_column(Integer, default=0, comment="实际已发放的批改积分（改分时按差额补发/回扣）")
+    review_points: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"), comment="实际已发放的批改积分（改分时按差额补发/回扣）")
 
     def __repr__(self) -> str:
         return f"<HomeworkRecord hw={self.homework_id} stu={self.student_id} {self.status}>"
@@ -164,13 +165,14 @@ class HomeworkReviewRule(Base):
 
     __tablename__ = "homework_review_rules"
     __table_args__ = (
+        UniqueConstraint("min_score", name="uq_homework_review_rules_min_score"),
         {"comment": "作业批改档位表：分数下限 → 积分映射，admin 可改"},
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True, comment="档位ID")
-    min_score: Mapped[int] = mapped_column(Integer, unique=True, nullable=False, comment="档位分数下限（含）")
-    points: Mapped[int] = mapped_column(Integer, nullable=False, default=0, comment="该档位发放的积分")
-    enabled: Mapped[bool] = mapped_column(Boolean, default=True, comment="是否启用；false 则跳过该档")
+    min_score: Mapped[int] = mapped_column(Integer, nullable=False, comment="档位分数下限（含）")
+    points: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default=text("0"), comment="该档位发放的积分")
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("1"), comment="是否启用；false 则跳过该档")
     updated_by: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.id"), comment="最后修改人（admin）ID")
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now(), comment="最后修改时间"
@@ -283,7 +285,7 @@ class PointLog(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True, comment="流水ID")
     student_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False, comment="学生用户ID")
-    type: Mapped[str] = mapped_column(String(20), nullable=False, comment="类型：checkin/homework/reading/game/consume（consume 为负数）")
+    type: Mapped[str] = mapped_column(String(20), nullable=False, comment="类型：checkin/homework/reading/game/consume/review（consume 为负数）")
     points: Mapped[int] = mapped_column(Integer, nullable=False, comment="积分数值，正为发放、负为扣减")
     remark: Mapped[str | None] = mapped_column(String(255), comment="备注说明")
     operator_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.id"), comment="操作人ID（家长扣分时为家长ID）")
