@@ -13,7 +13,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.db.repo import Repo
-from app.models.constants import POINT_TYPE_CONSUME, ROLE_STUDENT
+from app.models.constants import POINT_TYPE_CONSUME, POINT_TYPE_REVIEW, ROLE_STUDENT
 from app.models.entities import PointLog, User
 
 
@@ -203,6 +203,87 @@ def consume(
     user.total_points -= points
     db.flush()
     return user.total_points
+
+
+def award_amount(
+    db: Session,
+    student_id: int,
+    amount: int,
+    type_: str = POINT_TYPE_REVIEW,
+    remark: str | None = None,
+    operator_id: int | None = None,
+) -> int:
+    """按指定数额发放积分（不经 point_rules，无日上限）。
+
+    与 `award` 的区别：`award` 的数额取自 `point_rules` 表，本方法直接指定数额，
+    用于「分数换算积分」这类数额由业务数据决定的场景（PRD 5.3 作业批改）。
+    批改积分**不设日上限** —— 一个学生一天可能被批改多份作业。
+
+    amount <= 0 时直接返回 0，不写流水。同步累加 `users.total_points`。
+    `type_` 默认 `review`（批改积分）。
+    """
+    if amount <= 0:
+        return 0
+
+    user = Repo(db).get_user_by_id(student_id)
+    if user is None or user.role != ROLE_STUDENT:
+        raise PointError("仅可为学生账号发放积分")
+
+    db.add(
+        PointLog(
+            student_id=student_id,
+            type=type_,
+            points=amount,
+            remark=remark,
+            operator_id=operator_id,
+            log_date=today(),
+        )
+    )
+    user.total_points += amount
+    db.flush()
+    return amount
+
+
+def deduct_amount(
+    db: Session,
+    student_id: int,
+    amount: int,
+    type_: str = POINT_TYPE_REVIEW,
+    remark: str | None = None,
+    operator_id: int | None = None,
+) -> int:
+    """回扣积分（不经 point_rules）。
+
+    与 `consume` 的区别：`consume` 余额不足时抛 `PointError`，
+    本方法**扣到 0 为止**、不抛异常 —— 老师改低分数时不该被学生余额卡住
+    （PRD 5.3 作业批改）。欠额不追扣。
+
+    返回实际扣减额；无余额可扣时返回 0。`type_` 默认 `review`（批改积分）。
+    """
+    if amount <= 0:
+        return 0
+
+    user = Repo(db).get_user_by_id(student_id)
+    if user is None or user.role != ROLE_STUDENT:
+        raise PointError("仅可为学生账号扣减积分")
+
+    actual = min(amount, user.total_points)
+    if actual <= 0:
+        return 0
+
+    db.add(
+        PointLog(
+            student_id=student_id,
+            type=type_,
+            points=-actual,  # 流水记负数
+            remark=remark,
+            operator_id=operator_id,
+            log_date=today(),
+        )
+    )
+    user.total_points -= actual
+    db.flush()
+    return actual
 
 
 def list_logs(
