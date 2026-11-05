@@ -2875,9 +2875,17 @@ Expected: 输出生成路径 `zg-tsp-docs/sql/init.sql`
 
 Run:
 ```bash
-grep -n "homework_review_rules\|review_score\|review_points" zg-tsp-docs/sql/init.sql
+grep -n "homework_review_rules\|review_score\|review_points\|ix_homework_records_pending" zg-tsp-docs/sql/init.sql
 ```
-Expected: 能查到新表与新字段
+Expected: 能查到新表、新字段与新索引
+
+Run:
+```bash
+grep -c "INSERT INTO homework_review_rules" zg-tsp-docs/sql/init.sql
+```
+Expected: `3` —— init.sql 必须**内含 90→5 / 80→3 / 60→1 三档种子 INSERT**。
+
+> 部署路径是 `scripts/init.sh` 导入 `init.sql`，它**不跑**任何 `migrate_*` 脚本。若 init.sql 不带种子，全新部署的 `homework_review_rules` 表为空，而档位匹配规则是「无匹配则发 0 积分（不报错）」——批改会**静默**发 0 分。Task 1 的修复已让 `export_ddl` 输出这三行种子（`_render_review_rule_seeds`），本步骤只需重新生成，不要手改 SQL。
 
 - [ ] **Step 2: PRD 5.3 补批改小节**
 
