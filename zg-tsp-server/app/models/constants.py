@@ -35,6 +35,7 @@ POINT_TYPE_HOMEWORK = "homework"
 POINT_TYPE_READING = "reading"
 POINT_TYPE_GAME = "game"
 POINT_TYPE_CONSUME = "consume"
+POINT_TYPE_REVIEW = "review"
 
 # --- 文章状态 ---
 ARTICLE_PUBLISHED = "published"
