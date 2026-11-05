@@ -233,6 +233,23 @@ class Repo:
             )
         )
 
+    def get_homework_record_for_update(
+        self, homework_id: int, student_id: int
+    ) -> HomeworkRecord | None:
+        """取记录并加行锁（SELECT ... FOR UPDATE）。
+
+        批改作业时用，防止两个老师同时批改同一份导致积分重复发放
+        （PRD 5.3）。仅 MySQL 生效。
+        """
+        return self.db.scalar(
+            select(HomeworkRecord)
+            .where(
+                HomeworkRecord.homework_id == homework_id,
+                HomeworkRecord.student_id == student_id,
+            )
+            .with_for_update()
+        )
+
     def list_homework_records(self, homework_id: int) -> list[HomeworkRecord]:
         return list(
             self.db.scalars(
@@ -251,6 +268,60 @@ class Repo:
             )
         ) or 0
 
+    def list_pending_reviews(
+        self, teacher_id: int, page: int = 1, size: int = 20
+    ) -> tuple[list[dict], int]:
+        """待批改列表：该老师所有班级的「已提交但未批改」记录（PRD 5.3）。
+
+        返回 (当前页行, 总数)。每行含学生名、作业标题、提交信息与异常标记。
+        """
+        base = (
+            select(HomeworkRecord, Homework, User)
+            .join(Homework, Homework.id == HomeworkRecord.homework_id)
+            .join(User, User.id == HomeworkRecord.student_id)
+            .join(Class, Class.id == Homework.class_id)
+            .where(
+                Class.teacher_id == teacher_id,
+                HomeworkRecord.submit_time.isnot(None),
+                HomeworkRecord.reviewed_at.is_(None),
+            )
+        )
+        count_stmt = (
+            select(func.count())
+            .select_from(HomeworkRecord)
+            .join(Homework, Homework.id == HomeworkRecord.homework_id)
+            .join(Class, Class.id == Homework.class_id)
+            .where(
+                Class.teacher_id == teacher_id,
+                HomeworkRecord.submit_time.isnot(None),
+                HomeworkRecord.reviewed_at.is_(None),
+            )
+        )
+        total = self.db.scalar(count_stmt) or 0
+        stmt = (
+            base.order_by(HomeworkRecord.submit_time.desc())
+            .offset((page - 1) * size)
+            .limit(size)
+        )
+        rows = []
+        for rec, hw, stu in self.db.execute(stmt).all():
+            rows.append({
+                "homework_id": hw.id,
+                "homework_title": hw.title,
+                "student_id": stu.id,
+                "student_name": stu.nickname or stu.username,
+                "username": stu.username,
+                "submit_time": rec.submit_time.isoformat() if rec.submit_time else None,
+                "duration_minutes": rec.duration_minutes,
+                "file_url": rec.file_url,
+                "text_content": rec.text_content,
+                # 用时 <1 分钟标记异常（PRD 5.3）
+                "suspicious": bool(
+                    rec.duration_minutes is not None and rec.duration_minutes < 1
+                ),
+            })
+        return rows, total
+
     # ---------------- 作业批改档位（PRD 5.3） ----------------
 
     def add_review_rule(self, rule: HomeworkReviewRule) -> HomeworkReviewRule:
@@ -262,6 +333,33 @@ class Repo:
         return self.db.scalar(
             select(HomeworkReviewRule).where(HomeworkReviewRule.min_score == min_score)
         )
+
+    def list_review_rules(self) -> list[HomeworkReviewRule]:
+        """全部档位（按分数下限从高到低）。"""
+        return list(
+            self.db.scalars(
+                select(HomeworkReviewRule).order_by(HomeworkReviewRule.min_score.desc())
+            )
+        )
+
+    def get_review_rule_by_id(self, rule_id: int) -> HomeworkReviewRule | None:
+        return self.db.get(HomeworkReviewRule, rule_id)
+
+    def match_review_points(self, score: int) -> int:
+        """按分数匹配档位，返回该档积分；无匹配返回 0。
+
+        取所有 enabled 且 min_score <= score 的档位中 min_score 最大的一档。
+        """
+        rule = self.db.scalar(
+            select(HomeworkReviewRule)
+            .where(
+                HomeworkReviewRule.enabled.is_(True),
+                HomeworkReviewRule.min_score <= score,
+            )
+            .order_by(HomeworkReviewRule.min_score.desc())
+            .limit(1)
+        )
+        return rule.points if rule else 0
 
     # ---------------- 签到（PRD 5.4） ----------------
 
