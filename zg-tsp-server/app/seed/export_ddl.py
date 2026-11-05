@@ -53,8 +53,11 @@ COLLATION = "utf8mb4_0900_ai_ci"
 # SQL 文件本身不含任何可登录的密码。
 ADMIN_HASH_PLACEHOLDER = "__ADMIN_BCRYPT_HASH__"
 
-# 种子积分规则复用 initial_data 的定义，避免两处漂移
-from app.seed.initial_data import DEFAULT_POINT_RULES  # noqa: E402  (避免循环导入放最后)
+# 种子积分规则与作业批改档位复用 initial_data 的定义，避免两处漂移
+from app.seed.initial_data import (  # noqa: E402  (避免循环导入放最后)
+    DEFAULT_POINT_RULES,
+    DEFAULT_REVIEW_RULES,
+)
 
 _DIALECT = mysql.dialect()
 
@@ -181,6 +184,24 @@ def _render_point_rule_seeds() -> list[str]:
     return statements
 
 
+def _render_review_rule_seeds() -> list[str]:
+    """作业批改档位种子（PRD 5.3），幂等写入。
+
+    部署路径是 `scripts/init.sh` 导入本文件，它**不跑**任何 `migrate_*` 脚本。
+    档位表为空时批改会**静默发 0 积分**（匹配规则是「无匹配则发 0，不报错」），
+    故这三行种子必须内嵌在 init.sql 里。
+    """
+    statements = []
+    for min_score, points in DEFAULT_REVIEW_RULES:
+        statements.append(
+            "INSERT INTO homework_review_rules (min_score, points, enabled)\n"
+            f"SELECT {min_score}, {points}, 1\n"
+            "FROM DUAL\n"
+            f"WHERE NOT EXISTS (SELECT 1 FROM homework_review_rules WHERE min_score = {min_score});"
+        )
+    return statements
+
+
 def _render_admin_seed() -> str:
     """admin 账户种子，幂等写入。
 
@@ -202,7 +223,10 @@ def build_sql() -> str:
     out.append("-- zg-tsp 数据库初始化脚本")
     out.append("--")
     out.append("-- 本文件由 `python -m app.seed.export_ddl` **自动生成**，请勿手工编辑。")
-    out.append("-- 权威来源：`zg-tsp-server/app/models/entities.py`（14 张表）。")
+    out.append(
+        "-- 权威来源：`zg-tsp-server/app/models/entities.py`"
+        f"（{len(Base.metadata.tables)} 张表）。"
+    )
     out.append("-- 改了 ORM 后重新执行该脚本以保持同步。")
     out.append("--")
     out.append("-- 用法（推荐经 scripts/init.sh，它会替换 admin 密码占位符）：")
@@ -226,6 +250,10 @@ def build_sql() -> str:
 
     out.append("-- --- 积分规则种子（PRD 4.2）---")
     out.extend(_render_point_rule_seeds())
+    out.append("")
+
+    out.append("-- --- 作业批改档位种子（PRD 5.3）---")
+    out.extend(_render_review_rule_seeds())
     out.append("")
 
     out.append("-- --- admin 账户 ---")

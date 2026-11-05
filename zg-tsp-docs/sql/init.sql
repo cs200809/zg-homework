@@ -2,7 +2,7 @@
 -- zg-tsp 数据库初始化脚本
 --
 -- 本文件由 `python -m app.seed.export_ddl` **自动生成**，请勿手工编辑。
--- 权威来源：`zg-tsp-server/app/models/entities.py`（14 张表）。
+-- 权威来源：`zg-tsp-server/app/models/entities.py`（15 张表）。
 -- 改了 ORM 后重新执行该脚本以保持同步。
 --
 -- 用法（推荐经 scripts/init.sh，它会替换 admin 密码占位符）：
@@ -123,6 +123,19 @@ CREATE TABLE IF NOT EXISTS `homework` (
 	FOREIGN KEY(teacher_id) REFERENCES users (id)
 )COMMENT='作业表：老师布置';
 
+-- --- homework_review_rules ---
+CREATE TABLE IF NOT EXISTS `homework_review_rules` (
+	id INTEGER NOT NULL COMMENT '档位ID' AUTO_INCREMENT,
+	min_score INTEGER NOT NULL COMMENT '档位分数下限（含）',
+	points INTEGER NOT NULL COMMENT '该档位发放的积分' DEFAULT 0,
+	enabled BOOL NOT NULL COMMENT '是否启用；false 则跳过该档' DEFAULT 1,
+	updated_by INTEGER COMMENT '最后修改人（admin）ID',
+	updated_at DATETIME NOT NULL COMMENT '最后修改时间' DEFAULT CURRENT_TIMESTAMP,
+	PRIMARY KEY (id),
+	CONSTRAINT uq_homework_review_rules_min_score UNIQUE (min_score),
+	FOREIGN KEY(updated_by) REFERENCES users (id)
+)COMMENT='作业批改档位表：分数下限 → 积分映射，admin 可改';
+
 -- --- idiom_questions ---
 CREATE TABLE IF NOT EXISTS `idiom_questions` (
 	id INTEGER NOT NULL COMMENT '题目ID' AUTO_INCREMENT,
@@ -153,7 +166,7 @@ CREATE TABLE IF NOT EXISTS `parent_students` (
 CREATE TABLE IF NOT EXISTS `point_logs` (
 	id INTEGER NOT NULL COMMENT '流水ID' AUTO_INCREMENT,
 	student_id INTEGER NOT NULL COMMENT '学生用户ID',
-	type VARCHAR(20) NOT NULL COMMENT '类型：checkin/homework/reading/game/consume（consume 为负数）',
+	type VARCHAR(20) NOT NULL COMMENT '类型：checkin/homework/reading/game/consume/review（consume 为负数）',
 	points INTEGER NOT NULL COMMENT '积分数值，正为发放、负为扣减',
 	remark VARCHAR(255) COMMENT '备注说明',
 	operator_id INTEGER COMMENT '操作人ID（家长扣分时为家长ID）',
@@ -211,10 +224,17 @@ CREATE TABLE IF NOT EXISTS `homework_records` (
 	file_url VARCHAR(255) COMMENT '上传文件地址（jpg/png/pdf，≤10MB）',
 	text_content TEXT COMMENT '文本作答内容',
 	points INTEGER NOT NULL DEFAULT 0 COMMENT '本次获得的积分（读 point_rules）',
+	review_score INTEGER COMMENT '批改分数 0–100；NULL 表示未批改',
+	review_comment TEXT COMMENT '老师评语',
+	reviewed_at DATETIME COMMENT '批改时间',
+	reviewed_by INTEGER COMMENT '批改老师用户ID',
+	review_points INTEGER NOT NULL COMMENT '实际已发放的批改积分（改分时按差额补发/回扣）' DEFAULT 0,
 	PRIMARY KEY (id),
 	CONSTRAINT uq_homework_student UNIQUE (homework_id, student_id),
 	FOREIGN KEY(homework_id) REFERENCES homework (id),
 	FOREIGN KEY(student_id) REFERENCES users (id),
+	FOREIGN KEY(reviewed_by) REFERENCES users (id),
+	KEY `ix_homework_records_pending` (homework_id, reviewed_at),
 	KEY `ix_homework_records_student` (student_id)
 )COMMENT='作业记录表：学生开始/提交打点与用时统计';
 
@@ -274,6 +294,20 @@ INSERT INTO point_rules (rule_key, rule_name, points, daily_limit, extra_config,
 SELECT 'game_idiom', '成语接龙每题', 1, 20, NULL, 1
 FROM DUAL
 WHERE NOT EXISTS (SELECT 1 FROM point_rules WHERE rule_key = 'game_idiom');
+
+-- --- 作业批改档位种子（PRD 5.3）---
+INSERT INTO homework_review_rules (min_score, points, enabled)
+SELECT 90, 5, 1
+FROM DUAL
+WHERE NOT EXISTS (SELECT 1 FROM homework_review_rules WHERE min_score = 90);
+INSERT INTO homework_review_rules (min_score, points, enabled)
+SELECT 80, 3, 1
+FROM DUAL
+WHERE NOT EXISTS (SELECT 1 FROM homework_review_rules WHERE min_score = 80);
+INSERT INTO homework_review_rules (min_score, points, enabled)
+SELECT 60, 1, 1
+FROM DUAL
+WHERE NOT EXISTS (SELECT 1 FROM homework_review_rules WHERE min_score = 60);
 
 -- --- admin 账户 ---
 INSERT INTO users (username, password_hash, role, nickname, total_points, status, must_change_password)

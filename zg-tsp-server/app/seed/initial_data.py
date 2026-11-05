@@ -3,6 +3,7 @@
 - 建表：SQLAlchemy create_all，幂等
 - admin 种子：若无则创建，密码取 ADMIN_INIT_PASSWORD，缺省随机生成并打印日志
 - 积分规则种子：PRD 4.2 的 10 条默认规则，已存在则跳过
+- 作业批改档位种子：PRD 5.3 的 90→5 / 80→3 / 60→1 三档，已存在则跳过
 - 联调数据：一个班级、四角色测试账号、家长绑定关系、老师邀请码
 
 执行方式：
@@ -31,6 +32,7 @@ from app.models.constants import (
 from app.models.entities import (
     Base,
     Class,
+    HomeworkReviewRule,
     IdiomQuestion,
     ParentStudent,
     PointRule,
@@ -56,6 +58,15 @@ DEFAULT_POINT_RULES = [
     ("game_sudoku_medium", "数独-中等", 10, 20, None),
     ("game_sudoku_hard", "数独-困难", 15, 20, None),
     ("game_idiom", "成语接龙每题", 1, 20, None),
+]
+
+# 作业批改档位种子（PRD 5.3）：分数下限（含）→ 发放积分
+# 无匹配档位时批改发 0 积分（不报错），故档位表为空会导致批改静默发 0 分，
+# 必须随种子一起初始化。
+DEFAULT_REVIEW_RULES = [
+    (90, 5),
+    (80, 3),
+    (60, 1),
 ]
 
 # 联调账号（PRD 12 节验收用）
@@ -145,6 +156,26 @@ def seed_point_rules(db: Session) -> int:
         created += 1
     if created:
         logger.info("积分规则新增 %d 条", created)
+    return created
+
+
+def seed_homework_review_rules(db: Session) -> int:
+    """写入作业批改档位种子，已存在则跳过。返回新增条数。
+
+    档位表为空时批改会**静默发 0 积分**（匹配规则是「无匹配则发 0，不报错」），
+    因此新环境必须随种子一起写入这三档。
+    """
+    repo = Repo(db)
+    created = 0
+    for min_score, points in DEFAULT_REVIEW_RULES:
+        if repo.get_review_rule_by_min_score(min_score):
+            continue
+        repo.add_review_rule(
+            HomeworkReviewRule(min_score=min_score, points=points, enabled=True)
+        )
+        created += 1
+    if created:
+        logger.info("作业批改档位新增 %d 条", created)
     return created
 
 
@@ -240,6 +271,7 @@ def run_seed(reset: bool = False) -> None:
     try:
         admin, _ = seed_admin(db)
         seed_point_rules(db)
+        seed_homework_review_rules(db)
         klass = seed_class(db, admin)
         seed_dev_accounts(db, admin, klass)
         db.commit()

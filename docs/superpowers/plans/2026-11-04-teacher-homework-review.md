@@ -586,6 +586,11 @@ git commit -m "feat: 积分服务新增 award_amount / deduct_amount —— 支�
 
 - [ ] **Step 1: 在 `repo.py` 加档位表方法**
 
+> ⚠️ **Task 1 的审查修复已提前加了 `add_review_rule` 与 `get_review_rule_by_min_score`**
+> （供 `seed_homework_review_rules` 使用）。执行本步时**跳过这两个方法**，
+> 只补 `list_review_rules` / `get_review_rule_by_id` / `match_review_points` /
+> `get_homework_record_for_update` / `list_pending_reviews`。
+
 编辑 `zg-tsp-server/app/db/repo.py`。在 `# ---------------- 作业（PRD 5.3） ----------------` 段落之后、`# ---------------- 签到（PRD 5.4） ----------------` 之前插入：
 
 ```python
