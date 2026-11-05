@@ -279,6 +279,11 @@ async def homework_records(
                     rec.duration_minutes is not None
                     and rec.duration_minutes < MIN_DURATION_MINUTES
                 ),
+                # 老师批改结果（PRD 5.3）
+                "review_score": rec.review_score,
+                "review_comment": rec.review_comment,
+                "reviewed_at": rec.reviewed_at.isoformat() if rec.reviewed_at else None,
+                "review_points": rec.review_points,
             })
         rows.append(row)
 
