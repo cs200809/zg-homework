@@ -127,6 +127,7 @@ class HomeworkRecord(Base):
     __table_args__ = (
         UniqueConstraint("homework_id", "student_id", name="uq_homework_student"),
         Index("ix_homework_records_student", "student_id"),
+        Index("ix_homework_records_pending", "homework_id", "reviewed_at"),
         {"comment": "作业记录表：学生开始/提交打点与用时统计"},
     )
 
@@ -140,9 +141,43 @@ class HomeworkRecord(Base):
     file_url: Mapped[str | None] = mapped_column(String(255), comment="上传文件地址（jpg/png/pdf，≤10MB）")
     text_content: Mapped[str | None] = mapped_column(Text, comment="文本作答内容")
     points: Mapped[int] = mapped_column(Integer, default=0, comment="本次获得的积分（读 point_rules）")
+    review_score: Mapped[int | None] = mapped_column(Integer, comment="批改分数 0–100；NULL 表示未批改")
+    review_comment: Mapped[str | None] = mapped_column(Text, comment="老师评语")
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, comment="批改时间")
+    reviewed_by: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.id"), comment="批改老师用户ID")
+    review_points: Mapped[int] = mapped_column(Integer, default=0, comment="实际已发放的批改积分（改分时按差额补发/回扣）")
 
     def __repr__(self) -> str:
         return f"<HomeworkRecord hw={self.homework_id} stu={self.student_id} {self.status}>"
+
+
+# --- homework_review_rules ---
+class HomeworkReviewRule(Base):
+    """作业批改档位表：分数下限 → 积分的映射（admin 可改）。
+
+    匹配规则：取所有 enabled 且 min_score <= score 的档位中 min_score 最大的一档；
+    无匹配则发 0 积分（不报错）。
+
+    与 point_rules 的区别：point_rules 存「一次行为发多少分」的单值规则，
+    本表存「分数区间 → 积分」的档位映射，结构不同故独立建表。
+    """
+
+    __tablename__ = "homework_review_rules"
+    __table_args__ = (
+        {"comment": "作业批改档位表：分数下限 → 积分映射，admin 可改"},
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True, comment="档位ID")
+    min_score: Mapped[int] = mapped_column(Integer, unique=True, nullable=False, comment="档位分数下限（含）")
+    points: Mapped[int] = mapped_column(Integer, nullable=False, default=0, comment="该档位发放的积分")
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, comment="是否启用；false 则跳过该档")
+    updated_by: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.id"), comment="最后修改人（admin）ID")
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now(), comment="最后修改时间"
+    )
+
+    def __repr__(self) -> str:
+        return f"<HomeworkReviewRule >= {self.min_score} -> {self.points}分>"
 
 
 # --- checkins ---
