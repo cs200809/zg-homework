@@ -1,7 +1,7 @@
 #!/bin/sh
 # zg-tsp 数据库初始化脚本
 #
-# 一条命令完成：建库 → 建 14 张表 → 写积分规则种子 → 创建 admin 账户。
+# 一条命令完成：建库 → 建表 → 写积分规则与批改档位种子 → 创建 admin 账户。
 #
 # 用法：
 #   ./scripts/init.sh            # 初始化（幂等，可重复执行）
@@ -228,7 +228,7 @@ fi
 [ -n "${ADMIN_HASH}" ] || die "生成 admin 密码哈希失败"
 
 # --- 替换占位符并导入 ---
-info "导入建表 SQL（14 张表 + 积分规则 + admin）"
+info "导入建表 SQL（建表 + 积分规则 + 批改档位种子 + admin）"
 
 # 用 sed 在管道里替换占位符，不改动交付的 init.sql 本身。
 # bcrypt 哈希含 `.` `/` `$` 等字符：sed 替换串中只有 `\` `&` 和分隔符是特殊的，
@@ -243,17 +243,27 @@ sed "s|__ADMIN_BCRYPT_HASH__|${ESC_HASH}|g" "${INIT_SQL}" > "${TMP_SQL}"
 mysql_run "${DB_NAME}" < "${TMP_SQL}" || die "导入 SQL 失败"
 
 # --- 校验 ---
+# 期望值从 init.sql **动态推导**而非硬编码 —— 加表时不必改脚本，
+# 否则每加一张表部署就会误报「校验失败」。
+EXPECT_TABLE_COUNT=$(grep -c 'CREATE TABLE IF NOT EXISTS' "${INIT_SQL}" 2>/dev/null || echo 0)
+EXPECT_FK_COUNT=$(grep -c 'FOREIGN KEY' "${INIT_SQL}" 2>/dev/null || echo 0)
+EXPECT_REVIEW_RULE_COUNT=$(grep -c 'INSERT INTO homework_review_rules' "${INIT_SQL}" 2>/dev/null || echo 0)
+
 TABLE_COUNT=$(mysql_run -N -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='${DB_NAME}';" 2>/dev/null || echo 0)
 FK_COUNT=$(mysql_run -N -e "SELECT COUNT(*) FROM information_schema.table_constraints WHERE table_schema='${DB_NAME}' AND constraint_type='FOREIGN KEY';" 2>/dev/null || echo 0)
 RULE_COUNT=$(mysql_run -N -e "SELECT COUNT(*) FROM \`${DB_NAME}\`.point_rules;" 2>/dev/null || echo 0)
+REVIEW_RULE_COUNT=$(mysql_run -N -e "SELECT COUNT(*) FROM \`${DB_NAME}\`.homework_review_rules;" 2>/dev/null || echo 0)
 ADMIN_EXISTS=$(mysql_run -N -e "SELECT COUNT(*) FROM \`${DB_NAME}\`.users WHERE username='admin';" 2>/dev/null || echo 0)
 ADMIN_MUST_CHANGE=$(mysql_run -N -e "SELECT must_change_password FROM \`${DB_NAME}\`.users WHERE username='admin';" 2>/dev/null || echo "")
 
-[ "${TABLE_COUNT}" = "14" ] || die "校验失败：期望 14 张表，实际 ${TABLE_COUNT} 张"
-[ "${FK_COUNT}" = "20" ] || warn "外键数量为 ${FK_COUNT}（期望 20），请检查"
+[ "${TABLE_COUNT}" = "${EXPECT_TABLE_COUNT}" ] || die "校验失败：期望 ${EXPECT_TABLE_COUNT} 张表，实际 ${TABLE_COUNT} 张"
+[ "${FK_COUNT}" = "${EXPECT_FK_COUNT}" ] || warn "外键数量为 ${FK_COUNT}（期望 ${EXPECT_FK_COUNT}），请检查"
+# 批改档位为空会导致批改静默发 0 积分（匹配规则是「无匹配则发 0，不报错」），
+# 故必须校验档位种子已落地。
+[ "${REVIEW_RULE_COUNT}" = "${EXPECT_REVIEW_RULE_COUNT}" ] || die "校验失败：期望 ${EXPECT_REVIEW_RULE_COUNT} 条批改档位，实际 ${REVIEW_RULE_COUNT} 条"
 
 if [ "${ADMIN_EXISTS}" = "1" ]; then
-  ok "表 ${TABLE_COUNT} 张 / 外键 ${FK_COUNT} 个 / 积分规则 ${RULE_COUNT} 条 / admin 已创建"
+  ok "表 ${TABLE_COUNT} 张 / 外键 ${FK_COUNT} 个 / 积分规则 ${RULE_COUNT} 条 / 批改档位 ${REVIEW_RULE_COUNT} 条 / admin 已创建"
 else
   die "校验失败：admin 账户未创建"
 fi

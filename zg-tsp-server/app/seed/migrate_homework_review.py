@@ -91,14 +91,17 @@ def _existing_indexes(conn) -> set[str]:
     return {row[0] for row in rows}
 
 
-def _existing_foreign_keys(conn) -> set[str]:
-    rows = conn.execute(
+def _has_foreign_key(conn, table: str, column: str, ref_table: str) -> bool:
+    """该表该列上是否已有指向 ref_table 的外键（按列判定，不依赖约束名）。"""
+    row = conn.execute(
         text(
-            "SELECT DISTINCT CONSTRAINT_NAME FROM information_schema.REFERENTIAL_CONSTRAINTS "
-            "WHERE CONSTRAINT_SCHEMA = DATABASE() AND TABLE_NAME = 'homework_records'"
-        )
-    )
-    return {row[0] for row in rows}
+            "SELECT COUNT(*) FROM information_schema.KEY_COLUMN_USAGE "
+            "WHERE CONSTRAINT_SCHEMA = DATABASE() AND TABLE_NAME = :t "
+            "AND COLUMN_NAME = :c AND REFERENCED_TABLE_NAME = :rt"
+        ),
+        {"t": table, "c": column, "rt": ref_table},
+    ).scalar()
+    return bool(row)
 
 
 def _existing_min_scores(conn) -> set[int]:
@@ -127,10 +130,11 @@ def main(check_only: bool = False) -> None:
             added.append(name)
 
         # 外键：ORM 里 reviewed_by 指向 users.id，create_all 不会给已有表补外键
-        have_fks = _existing_foreign_keys(conn)
+        # 按**列**判定外键是否已存在：init.sql 建出的外键是匿名的，
+        # 按约束名比对会漏判并加出重复外键。
         for fk_name, fk_col, fk_ref in NEW_FOREIGN_KEYS:
-            if fk_name in have_fks:
-                print(f"跳过（已存在）：外键 {fk_name}")
+            if _has_foreign_key(conn, "homework_records", fk_col, fk_ref):
+                print(f"跳过（已存在）：外键 {fk_col} → {fk_ref}.id")
                 continue
             if check_only:
                 print(f"待新增：外键 {fk_name} ({fk_col} → {fk_ref}.id)")
