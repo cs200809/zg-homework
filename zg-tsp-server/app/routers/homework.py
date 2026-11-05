@@ -23,6 +23,7 @@ from app.models.constants import (
     HOMEWORK_NOT_STARTED,
     HOMEWORK_SUBMITTED,
     POINT_TYPE_HOMEWORK,
+    POINT_TYPE_REVIEW,
     ROLE_STUDENT,
     ROLE_TEACHER,
 )
@@ -77,6 +78,11 @@ def _record_to_dict(r: HomeworkRecord) -> dict:
         "suspicious": bool(
             r.duration_minutes is not None and r.duration_minutes < MIN_DURATION_MINUTES
         ),
+        # 老师批改结果（PRD 5.3）
+        "review_score": r.review_score,
+        "review_comment": r.review_comment,
+        "reviewed_at": r.reviewed_at.isoformat() if r.reviewed_at else None,
+        "review_points": r.review_points,
     }
 
 
@@ -119,6 +125,22 @@ class HomeworkListRequest(BaseModel):
 
 class HomeworkIdRequest(BaseModel):
     homework_id: int
+
+
+class HomeworkReviewRequest(BaseModel):
+    """老师批改作业（PRD 5.3）。"""
+
+    homework_id: int
+    student_id: int
+    score: int = Field(..., ge=0, le=100)
+    comment: str | None = Field(None, max_length=2000)
+
+
+class HomeworkPendingRequest(BaseModel):
+    """待批改列表（PRD 5.3）。"""
+
+    page: int = Field(1, ge=1)
+    size: int = Field(20, ge=1, le=100)
 
 
 # ---------------- 接口 ----------------
@@ -266,6 +288,95 @@ async def homework_records(
         "records": rows,
         "total_students": len(students),
         "submitted_count": submitted,
+    })
+
+
+@router.post("/review")
+async def review_homework(
+    req: HomeworkReviewRequest,
+    teacher: User = Depends(get_verified_user),
+    db: Session = Depends(get_db),
+):
+    """老师批改作业：打分 + 评语，积分按差额补发/回扣（PRD 5.3）。
+
+    积分口径：`target` = 新分数匹配的档位积分；`granted` = 该记录已发放的
+    批改积分；差额为正则补发，为负则回扣（余额不足时扣到 0 为止）。
+    """
+    _require_teacher(teacher)
+
+    repo = Repo(db)
+    hw = repo.get_homework_by_id(req.homework_id)
+    if not hw:
+        raise _not_found("作业不存在")
+    _own_class_or_403(db, teacher, hw.class_id)
+
+    # 行锁：防止两个老师同时批改同一份导致积分重复发放
+    record = repo.get_homework_record_for_update(req.homework_id, req.student_id)
+    # 无记录 = 学生从未开始（未提交）；有记录但未提交时间同样不可批改。
+    # 两种情况对老师是同一件事，统一报「尚未提交」。
+    if record is None or record.submit_time is None:
+        raise _bad_request("学生尚未提交，不可批改")
+
+    target = repo.match_review_points(req.score)
+    granted = record.review_points or 0
+    delta = target - granted
+
+    from app.services import point_service
+
+    awarded = 0
+    if delta > 0:
+        awarded = point_service.award_amount(
+            db,
+            record.student_id,
+            delta,
+            POINT_TYPE_REVIEW,
+            remark=f"作业批改：{hw.title}",
+            operator_id=teacher.id,
+        )
+    elif delta < 0:
+        awarded = -point_service.deduct_amount(
+            db,
+            record.student_id,
+            -delta,
+            POINT_TYPE_REVIEW,
+            remark=f"作业批改改分：{hw.title}",
+            operator_id=teacher.id,
+        )
+
+    record.review_score = req.score
+    record.review_comment = req.comment
+    record.reviewed_at = datetime.now()
+    record.reviewed_by = teacher.id
+    # awarded 是**净变动**（正=实发，负=实扣），故直接相加。
+    # delta<0 且余额不足时 |awarded| < |delta|，此时 review_points 会大于
+    # 新分数对应的目标积分 —— 这是「扣到 0 为止、不追扣」的既定语义。
+    record.review_points = granted + awarded
+
+    db.commit()
+    db.refresh(record)
+
+    return ok({
+        "record": _record_to_dict(record),
+        "points_delta": delta,
+        "awarded_points": awarded,
+    })
+
+
+@router.post("/pending")
+async def pending_reviews(
+    req: HomeworkPendingRequest,
+    teacher: User = Depends(get_verified_user),
+    db: Session = Depends(get_db),
+):
+    """老师查看待批改清单（PRD 5.3）：已提交但未批改的作业。"""
+    _require_teacher(teacher)
+
+    rows, total = Repo(db).list_pending_reviews(teacher.id, req.page, req.size)
+    return ok({
+        "list": rows,
+        "total": total,
+        "page": req.page,
+        "size": req.size,
     })
 
 
