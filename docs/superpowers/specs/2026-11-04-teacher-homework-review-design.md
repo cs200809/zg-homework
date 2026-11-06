@@ -177,8 +177,9 @@ delta == 0 → 不动积分，仅更新分数与评语
 这是本项目**首次使用行锁**，实现需注意：
 
 - 仅 MySQL 生效（本项目不用 sqlite，无兼容问题）
-- 加锁范围限定在单条 `homework_records` 行，不锁 `users` 行
-- 事务内先锁记录，再读 `users.total_points` 计算余额
+- **锁两行**：`homework_records` 行（防同一份作业重复发积分）+ `users` 行（防同一学生多份作业并发批改时余额互相覆盖）
+- **锁序固定**：`homework_records` → `users`。每次批改只涉及一条作业记录与一个用户，锁序一致故无死锁
+- 事务内先锁记录，再锁用户，再读 `users.total_points` 计算余额
 
 ### 4.5 权限与校验
 
@@ -186,8 +187,7 @@ delta == 0 → 不动积分，仅更新分数与评语
 |------|------|------|
 | 必须是 teacher | `_require_teacher(user)` | 403 仅老师可执行此操作 |
 | 班级归属 | `_own_class_or_403(db, teacher, hw.class_id)` | 403 只能操作自己班级的数据 |
-| 记录存在 | `repo.get_homework_record()` | 404 记录不存在 |
-| 必须已提交 | `record.submit_time is not None` | 400 学生尚未提交，不可批改 |
+| 记录存在 | 记录不存在或未提交 → 400 学生尚未提交，不可批改 |
 | 分数范围 | Pydantic `Field(ge=0, le=100)` | 400 分数需在 0–100 之间 |
 | 档位配置权限 | 函数体首行判 `role == admin` | 403 仅管理员可配置批改档位 |
 | 档位下限唯一 | 新增档位时查 `min_score` 是否已存在 | 400 该分数档位已存在 |

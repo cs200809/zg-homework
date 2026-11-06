@@ -62,6 +62,16 @@ def _homework_to_dict(hw: Homework) -> dict:
     }
 
 
+def _review_fields(rec: HomeworkRecord) -> dict:
+    """老师批改结果（PRD 5.3）。`_record_to_dict` 与 `/homework/records` 共用，避免两处漂移。"""
+    return {
+        "review_score": rec.review_score,
+        "review_comment": rec.review_comment,
+        "reviewed_at": rec.reviewed_at.isoformat() if rec.reviewed_at else None,
+        "review_points": rec.review_points,
+    }
+
+
 def _record_to_dict(r: HomeworkRecord) -> dict:
     return {
         "id": r.id,
@@ -79,10 +89,7 @@ def _record_to_dict(r: HomeworkRecord) -> dict:
             r.duration_minutes is not None and r.duration_minutes < MIN_DURATION_MINUTES
         ),
         # 老师批改结果（PRD 5.3）
-        "review_score": r.review_score,
-        "review_comment": r.review_comment,
-        "reviewed_at": r.reviewed_at.isoformat() if r.reviewed_at else None,
-        "review_points": r.review_points,
+        **_review_fields(r),
     }
 
 
@@ -280,10 +287,7 @@ async def homework_records(
                     and rec.duration_minutes < MIN_DURATION_MINUTES
                 ),
                 # 老师批改结果（PRD 5.3）
-                "review_score": rec.review_score,
-                "review_comment": rec.review_comment,
-                "reviewed_at": rec.reviewed_at.isoformat() if rec.reviewed_at else None,
-                "review_points": rec.review_points,
+                **_review_fields(rec),
             })
         rows.append(row)
 
@@ -329,24 +333,27 @@ async def review_homework(
     from app.services import point_service
 
     awarded = 0
-    if delta > 0:
-        awarded = point_service.award_amount(
-            db,
-            record.student_id,
-            delta,
-            POINT_TYPE_REVIEW,
-            remark=f"作业批改：{hw.title}",
-            operator_id=teacher.id,
-        )
-    elif delta < 0:
-        awarded = -point_service.deduct_amount(
-            db,
-            record.student_id,
-            -delta,
-            POINT_TYPE_REVIEW,
-            remark=f"作业批改改分：{hw.title}",
-            operator_id=teacher.id,
-        )
+    try:
+        if delta > 0:
+            awarded = point_service.award_amount(
+                db,
+                record.student_id,
+                delta,
+                POINT_TYPE_REVIEW,
+                remark=f"作业批改：{hw.title}",
+                operator_id=teacher.id,
+            )
+        elif delta < 0:
+            awarded = -point_service.deduct_amount(
+                db,
+                record.student_id,
+                -delta,
+                POINT_TYPE_REVIEW,
+                remark=f"作业批改改分：{hw.title}",
+                operator_id=teacher.id,
+            )
+    except point_service.PointError as exc:
+        raise _bad_request(exc.message)
 
     record.review_score = req.score
     record.review_comment = req.comment

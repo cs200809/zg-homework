@@ -42,6 +42,24 @@ class Repo:
     def get_user_by_id(self, user_id: int) -> User | None:
         return self.db.get(User, user_id)
 
+    def get_user_by_id_for_update(self, user_id: int) -> User | None:
+        """取用户并加行锁（SELECT ... FOR UPDATE）。
+
+        发放/回扣积分时锁住用户行，避免同一学生的并发积分变动互相覆盖
+        （两个会话都读到同一个旧余额，后写的把先写的覆盖掉）。
+
+        带 `populate_existing`：加锁读若命中 identity map 中已缓存的对象，
+        默认**不会**刷新其属性（读到的是加锁前的旧余额），行锁就白加了。
+        强制用本次加锁读到的最新值覆盖 —— SQLAlchemy 官方对
+        `with_for_update()` 的推荐用法。
+        """
+        return self.db.scalar(
+            select(User)
+            .where(User.id == user_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+
     def get_user_by_username(self, username: str) -> User | None:
         return self.db.scalar(select(User).where(User.username == username))
 
