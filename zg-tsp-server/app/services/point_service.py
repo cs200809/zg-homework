@@ -221,11 +221,13 @@ def award_amount(
 
     amount <= 0 时直接返回 0，不写流水。同步累加 `users.total_points`。
     `type_` 默认 `review`（批改积分）。
+
+    锁 `users` 行（FOR UPDATE），避免同一学生多份作业并发批改时余额互相覆盖。
     """
     if amount <= 0:
         return 0
 
-    user = Repo(db).get_user_by_id(student_id)
+    user = Repo(db).get_user_by_id_for_update(student_id)
     if user is None or user.role != ROLE_STUDENT:
         raise PointError("仅可为学生账号发放积分")
 
@@ -259,11 +261,13 @@ def deduct_amount(
     （PRD 5.3 作业批改）。欠额不追扣。
 
     返回实际扣减额；无余额可扣时返回 0。`type_` 默认 `review`（批改积分）。
+
+    锁 `users` 行（FOR UPDATE），避免同一学生多份作业并发批改时余额互相覆盖。
     """
     if amount <= 0:
         return 0
 
-    user = Repo(db).get_user_by_id(student_id)
+    user = Repo(db).get_user_by_id_for_update(student_id)
     if user is None or user.role != ROLE_STUDENT:
         raise PointError("仅可为学生账号扣减积分")
 
