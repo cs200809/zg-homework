@@ -7,8 +7,11 @@
 修改立即生效（无缓存层 —— 匹配时直接查库）。
 """
 
+import json
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.db.repo import Repo
@@ -88,7 +91,23 @@ async def review_rule_create(
             updated_by=admin.id,
         )
     )
-    db.commit()
+    repo.add_admin_log(
+        admin_id=admin.id,
+        action="review_rule_create",
+        target_type="homework_review_rule",
+        target_id=rule.id,
+        detail=json.dumps(
+            {"min_score": req.min_score, "points": req.points},
+            ensure_ascii=False,
+        ),
+    )
+    try:
+        db.commit()
+    except IntegrityError:
+        # 并发新增同一 min_score：上面的存在性检查是 TOCTOU，
+        # 真正兜底的是 DB 的唯一约束，这里转成与串行路径一致的 400。
+        db.rollback()
+        raise _bad_request(f"该分数档位已存在：{req.min_score}")
     db.refresh(rule)
     return ok({"rule": _rule_to_dict(rule)})
 
@@ -105,11 +124,25 @@ async def review_rule_update(
     if not rule:
         raise _not_found(f"档位 {req.id} 不存在")
 
+    before = _rule_to_dict(rule)
+
     if req.points is not None:
         rule.points = req.points
     if req.enabled is not None:
         rule.enabled = req.enabled
     rule.updated_by = admin.id
+
+    # 档位直接决定学生批改能拿多少分，admin 改动须留痕（与 point_rules_admin 一致）
+    repo.add_admin_log(
+        admin_id=admin.id,
+        action="review_rule_update",
+        target_type="homework_review_rule",
+        target_id=rule.id,
+        detail=json.dumps(
+            {"before": before, "after": _rule_to_dict(rule)},
+            ensure_ascii=False,
+        ),
+    )
 
     db.commit()
     db.refresh(rule)
