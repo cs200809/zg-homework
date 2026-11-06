@@ -20,6 +20,11 @@ export default function TeacherHomeworkPending() {
     setLoading(true)
     try {
       const r = await homeworkApi.pending(page, 20)
+      // 批改后该行不再属于待批改，最后一页可能被清空 → 回退一页
+      if (r.list.length === 0 && page > 1) {
+        setPage(page - 1)
+        return
+      }
       setRows(r.list)
       setTotal(r.total)
     } catch (e) {
