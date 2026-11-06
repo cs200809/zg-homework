@@ -25,6 +25,7 @@ from app.routers import (
     classes,
     games,
     homework,
+    homework_review_admin,
     parent,
     point_rules_admin,
     points,
@@ -113,6 +114,7 @@ app.include_router(admin.router)
 app.include_router(point_rules_admin.router)
 app.include_router(classes.router)
 app.include_router(homework.router)
+app.include_router(homework_review_admin.router)
 app.include_router(checkin.router)
 app.include_router(points.router)
 app.include_router(parent.router)
