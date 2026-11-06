@@ -131,11 +131,13 @@ CREATE TABLE homework_review_rules
 |------|------|------|-----------|
 | `/homework/review` | teacher | `{homework_id, student_id, score, comment?}` | `{record, points_delta, awarded_points}` |
 | `/homework/pending` | teacher | `{page, size}` | `{list, total, page, size}` |
-| `/homework/review-rules/list` | admin | `{}` | `{list}` |
-| `/homework/review-rules/update` | admin | `{id, points?, enabled?}` | `{rule}` |
-| `/homework/review-rules/create` | admin | `{min_score, points}` | `{rule}` |
+| `/admin/homework-review-rules/list` | admin | `{}` | `{list}` |
+| `/admin/homework-review-rules/update` | admin | `{id, points?, enabled?}` | `{rule}` |
+| `/admin/homework-review-rules/create` | admin | `{min_score, points}` | `{rule}` |
 
-`/homework/review-rules/list` 这三个接口的 router 归属：放在 `app/routers/homework.py` 内（路径前缀已是 `/homework`），admin 权限用 `require_admin` 依赖。**注意**：本项目 `/admin` 组是整组锁死 admin 的独立前缀，此处若放 `/homework/review-rules/*` 需在函数体首行判角色，与其他 router 的 `_require_*` 私有 helper 风格一致。
+这三个接口的 router 归属：**独立文件 `app/routers/homework_review_admin.py`**，路径前缀 `/admin/homework-review-rules`，用 `APIRouter(..., dependencies=[Depends(require_admin)])` **整组锁死 admin** —— 与既有的 `app/routers/point_rules_admin.py`（前缀 `/admin/rules`）范式一致。
+
+> 早前版本曾设想放在 `app/routers/homework.py` 内用 `/homework/review-rules/*` 前缀 + 函数体首行判角色。改为独立 admin router 后：路径归入既有的 `/admin` 命名空间、权限由依赖统一拦截、不必在每个函数体重复判角色。
 
 ### 4.2 批改接口的积分差额算法
 
