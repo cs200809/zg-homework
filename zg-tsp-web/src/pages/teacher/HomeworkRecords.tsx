@@ -131,11 +131,19 @@ export default function TeacherHomeworkRecords() {
             {
               title: '批改',
               width: 110,
-              render: (_: unknown, r: HomeworkRecordRow) => (
-                <Button size="small" onClick={() => setReviewing(r)}>
-                  {r.review_score == null ? '批改' : '修改批改'}
-                </Button>
-              ),
+              render: (_: unknown, r: HomeworkRecordRow) => {
+                // 未提交的记录服务端会拒批（400），按钮直接禁用避免无效操作
+                const reviewable = r.status === 'submitted' || r.status === 'late'
+                return (
+                  <Button
+                    size="small"
+                    disabled={!reviewable}
+                    onClick={() => setReviewing(r)}
+                  >
+                    {r.review_score == null ? '批改' : '修改批改'}
+                  </Button>
+                )
+              },
             },
             {
               title: '分数',
