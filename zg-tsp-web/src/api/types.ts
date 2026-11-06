@@ -74,6 +74,14 @@ export interface HomeworkRecord {
   text_content: string | null
   points: number
   suspicious: boolean
+  /** 老师批改分数 0–100；null 表示未批改 */
+  review_score?: number | null
+  /** 老师评语 */
+  review_comment?: string | null
+  /** 批改时间 */
+  reviewed_at?: string | null
+  /** 实际已发放的批改积分 */
+  review_points?: number
 }
 
 export interface HomeworkRecordRow {
@@ -88,6 +96,40 @@ export interface HomeworkRecordRow {
   file_url?: string | null
   text_content?: string | null
   suspicious?: boolean
+  /** 老师批改分数 0–100；null/undefined 表示未批改 */
+  review_score?: number | null
+  /** 老师评语 */
+  review_comment?: string | null
+  /** 批改时间 */
+  reviewed_at?: string | null
+  /** 实际已发放的批改积分 */
+  review_points?: number
+}
+
+/** 作业批改档位（admin 可配） */
+export interface HomeworkReviewRule {
+  id: number
+  /** 档位分数下限（含） */
+  min_score: number
+  /** 该档位发放的积分 */
+  points: number
+  enabled: boolean
+  updated_at: string | null
+}
+
+/** 待批改列表行 */
+export interface PendingReviewRow {
+  homework_id: number
+  homework_title: string
+  student_id: number
+  student_name: string
+  username: string
+  submit_time: string | null
+  duration_minutes: number | null
+  file_url: string | null
+  text_content: string | null
+  /** 用时 <1 分钟标记异常 */
+  suspicious: boolean
 }
 
 // ---------- 文章 ----------
@@ -125,7 +167,7 @@ export interface ArticleStats {
 }
 
 // ---------- 积分 ----------
-export type PointType = 'checkin' | 'homework' | 'reading' | 'game' | 'consume'
+export type PointType = 'checkin' | 'homework' | 'reading' | 'game' | 'consume' | 'review'
 
 export interface PointLog {
   id: number

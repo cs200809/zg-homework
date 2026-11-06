@@ -7,6 +7,7 @@ import type {
   Article,
   Child,
   ConsumeItem,
+  HomeworkReviewRule,
   InviteCode,
   PointLog,
   PointRule,
@@ -140,4 +141,20 @@ export const statsApi = {
         created_at: string
       }>
     >('/admin/classes/list', { page, size }),
+}
+
+// ---------- admin：作业批改档位（PRD 5.3） ----------
+/** 作业批改档位配置（admin）。沿用本文件混放 admin 接口的现状。 */
+export const reviewRuleApi = {
+  list: () =>
+    post<{ list: HomeworkReviewRule[]; total: number }>('/admin/homework-review-rules/list'),
+
+  create: (minScore: number, points: number) =>
+    post<{ rule: HomeworkReviewRule }>('/admin/homework-review-rules/create', {
+      min_score: minScore,
+      points,
+    }),
+
+  update: (id: number, fields: { points?: number; enabled?: boolean }) =>
+    post<{ rule: HomeworkReviewRule }>('/admin/homework-review-rules/update', { id, ...fields }),
 }
