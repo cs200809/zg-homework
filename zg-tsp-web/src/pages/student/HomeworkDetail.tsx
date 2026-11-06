@@ -16,7 +16,9 @@ import {
   Result,
   Space,
   Spin,
+  Statistic,
   Tag,
+  Typography,
   Upload,
 } from 'antd'
 import { UploadOutlined } from '@ant-design/icons'
@@ -143,6 +145,38 @@ export default function StudentHomeworkDetail() {
           style={{ marginBottom: 16 }}
           message="本次用时不足 1 分钟，已标记待老师审核"
         />
+      )}
+
+      {rec?.reviewed_at ? (
+        <Card size="small" title="老师批改" style={{ marginBottom: 16 }}>
+          <Space align="start" size={24} wrap>
+            <Statistic
+              title="分数"
+              value={rec.review_score ?? 0}
+              suffix="分"
+              valueStyle={{
+                fontSize: 28,
+                color:
+                  (rec.review_score ?? 0) >= 90
+                    ? '#52c41a'
+                    : (rec.review_score ?? 0) >= 60
+                      ? '#fa8c16'
+                      : '#f5222d',
+              }}
+            />
+            <div style={{ flex: 1, minWidth: 240 }}>
+              <Typography.Text type="secondary">评语</Typography.Text>
+              <div style={{ whiteSpace: 'pre-wrap', marginTop: 4 }}>
+                {rec.review_comment || '老师未写评语'}
+              </div>
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                批改时间：{new Date(rec.reviewed_at).toLocaleString()}
+              </Typography.Text>
+            </div>
+          </Space>
+        </Card>
+      ) : (
+        <Alert type="info" showIcon message="老师尚未批改" style={{ marginBottom: 16 }} />
       )}
 
       {submitted ? (
