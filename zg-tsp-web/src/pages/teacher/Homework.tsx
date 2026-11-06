@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import {
   App,
+  Badge,
   Button,
   Card,
   DatePicker,
@@ -10,6 +11,7 @@ import {
   Input,
   Popconfirm,
   Select,
+  Space,
   Table,
   Tag,
 } from 'antd'
@@ -33,6 +35,8 @@ export default function TeacherHomework() {
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
   const [loading, setLoading] = useState(true)
+  /** 待批改作业数（已提交未批改） */
+  const [pendingCount, setPendingCount] = useState(0)
 
   useEffect(() => {
     ;(async () => {
@@ -45,6 +49,18 @@ export default function TeacherHomework() {
       }
     })()
   }, [message])
+
+  useEffect(() => {
+    ;(async () => {
+      try {
+        // 只取 1 条用于探测，total 仍是全量待批改数
+        const r = await homeworkApi.pending(1, 1)
+        setPendingCount(r.total)
+      } catch {
+        // 计数失败不阻塞主流程
+      }
+    })()
+  }, [])
 
   const load = useCallback(async () => {
     if (!classId) return
@@ -145,15 +161,20 @@ export default function TeacherHomework() {
       <Card
         title="作业列表"
         extra={
-          <Select
-            style={{ width: 180 }}
-            value={classId}
-            onChange={(v) => {
-              setClassId(v)
-              setPage(1)
-            }}
-            options={classes.map((c) => ({ value: c.id, label: c.name }))}
-          />
+          <Space>
+            <Badge count={pendingCount} overflowCount={99}>
+              <Button onClick={() => navigate('/teacher/homework/pending')}>待批改</Button>
+            </Badge>
+            <Select
+              style={{ width: 180 }}
+              value={classId}
+              onChange={(v) => {
+                setClassId(v)
+                setPage(1)
+              }}
+              options={classes.map((c) => ({ value: c.id, label: c.name }))}
+            />
+          </Space>
         }
       >
         <Table<Homework>

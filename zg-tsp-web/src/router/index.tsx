@@ -27,6 +27,7 @@ import StudentProfile from '../pages/student/Profile'
 import TeacherClasses from '../pages/teacher/Classes'
 import TeacherHomework from '../pages/teacher/Homework'
 import TeacherHomeworkRecords from '../pages/teacher/HomeworkRecords'
+import TeacherHomeworkPending from '../pages/teacher/HomeworkPending'
 import TeacherArticles from '../pages/teacher/Articles'
 
 import AdminDashboard from '../pages/admin/Dashboard'
@@ -152,6 +153,8 @@ export default function AppRouter() {
       >
         <Route path="/teacher" element={<TeacherClasses />} />
         <Route path="/teacher/homework" element={<TeacherHomework />} />
+        {/* 顺序要紧：pending 必须排在 /teacher/homework/:id 之前，否则被当作 id 解析 */}
+        <Route path="/teacher/homework/pending" element={<TeacherHomeworkPending />} />
         <Route path="/teacher/homework/:id" element={<TeacherHomeworkRecords />} />
         <Route path="/teacher/articles" element={<TeacherArticles />} />
       </Route>

@@ -1,9 +1,10 @@
 /** 老师端作业完成情况（PRD 5.3、9 老师端）。 */
 
 import { useEffect, useState } from 'react'
-import { App, Card, Descriptions, Statistic, Table, Tag, Typography } from 'antd'
+import { App, Button, Card, Descriptions, Statistic, Table, Tag, Typography } from 'antd'
 import { useParams } from 'react-router-dom'
 
+import ReviewModal from '../../components/ReviewModal'
 import { homeworkApi } from '../../api/classes'
 import type { Homework, HomeworkRecordRow, HomeworkStatus } from '../../api/types'
 
@@ -12,6 +13,14 @@ const STATUS_TAG: Record<HomeworkStatus, { color: string; text: string }> = {
   doing: { color: 'processing', text: '进行中' },
   submitted: { color: 'success', text: '已提交' },
   late: { color: 'warning', text: '迟交' },
+}
+
+/** 分数档位配色：≥90 绿 / ≥80 蓝 / ≥60 橙 / <60 红。 */
+function scoreColor(v: number): string {
+  if (v >= 90) return 'green'
+  if (v >= 80) return 'blue'
+  if (v >= 60) return 'orange'
+  return 'red'
 }
 
 export default function TeacherHomeworkRecords() {
@@ -24,6 +33,10 @@ export default function TeacherHomeworkRecords() {
   const [submitted, setSubmitted] = useState(0)
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
+  /** 当前打开批改弹窗的记录 */
+  const [reviewing, setReviewing] = useState<HomeworkRecordRow | null>(null)
+  /** 批改完成后自增，触发列表重新拉取 */
+  const [reloadKey, setReloadKey] = useState(0)
 
   useEffect(() => {
     if (!Number.isFinite(homeworkId)) return
@@ -40,7 +53,7 @@ export default function TeacherHomeworkRecords() {
         setLoading(false)
       }
     })()
-  }, [homeworkId, message])
+  }, [homeworkId, message, reloadKey])
 
   if (loading) {
     return <Card loading />
@@ -116,6 +129,38 @@ export default function TeacherHomeworkRecords() {
               },
             },
             {
+              title: '批改',
+              width: 110,
+              render: (_: unknown, r: HomeworkRecordRow) => (
+                <Button size="small" onClick={() => setReviewing(r)}>
+                  {r.review_score == null ? '批改' : '修改批改'}
+                </Button>
+              ),
+            },
+            {
+              title: '分数',
+              dataIndex: 'review_score',
+              width: 90,
+              render: (v: number | null) =>
+                v == null ? (
+                  <span style={{ color: '#999' }}>未批改</span>
+                ) : (
+                  <Tag color={scoreColor(v)}>{v}</Tag>
+                ),
+            },
+            {
+              title: '评语',
+              dataIndex: 'review_comment',
+              render: (v: string | null) =>
+                v ? (
+                  <Typography.Text ellipsis={{ tooltip: v }} style={{ maxWidth: 160 }}>
+                    {v}
+                  </Typography.Text>
+                ) : (
+                  <span style={{ color: '#999' }}>-</span>
+                ),
+            },
+            {
               title: '积分',
               dataIndex: 'points',
               width: 80,
@@ -132,6 +177,19 @@ export default function TeacherHomeworkRecords() {
           suffix={` / ${total} 人`}
         />
       </Card>
+
+      <ReviewModal
+        open={reviewing != null}
+        homeworkId={homeworkId}
+        studentId={reviewing?.student_id ?? 0}
+        studentName={reviewing?.nickname || reviewing?.username || ''}
+        initialScore={reviewing?.review_score}
+        initialComment={reviewing?.review_comment}
+        answerText={reviewing?.text_content}
+        answerFileUrl={reviewing?.file_url}
+        onClose={() => setReviewing(null)}
+        onDone={() => setReloadKey((k) => k + 1)}
+      />
     </div>
   )
 }
