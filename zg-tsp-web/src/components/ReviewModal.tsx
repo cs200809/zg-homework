@@ -99,6 +99,7 @@ export default function ReviewModal({
           <InputNumber
             min={0}
             max={100}
+            precision={0}
             value={score}
             onChange={(v) => setScore(v ?? 0)}
             style={{ width: 160, marginLeft: 8 }}
@@ -111,6 +112,7 @@ export default function ReviewModal({
             value={comment}
             onChange={(e) => setComment(e.target.value)}
             placeholder="写给学生的评语（选填）"
+            maxLength={2000}
             style={{ marginTop: 8 }}
           />
         </div>
