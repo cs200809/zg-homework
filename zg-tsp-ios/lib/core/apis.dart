@@ -195,6 +195,14 @@ class TeacherApi {
   Future<Json> homeworkRecords(int homeworkId) =>
       ApiClient.instance.post('/homework/records', body: {'homework_id': homeworkId});
 
+  Future<Json> reviewHomework({required int homeworkId, required int studentId, required int score, String? comment}) =>
+      ApiClient.instance.post('/homework/review', body: {
+        'homework_id': homeworkId,
+        'student_id': studentId,
+        'score': score,
+        'comment': comment,
+      });
+
   Future<Json> deleteHomework(int id) =>
       ApiClient.instance.post('/homework/delete', body: {'homework_id': id});
 

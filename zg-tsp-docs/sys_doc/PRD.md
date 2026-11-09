@@ -314,8 +314,24 @@ CREATE TABLE homework_records
     status           VARCHAR(10), -- not_started/doing/submitted/late
     file_url         VARCHAR(255),
     text_content     TEXT,
-    points           INTEGER DEFAULT 0,
+    points           INTEGER DEFAULT 0, -- 提交积分，不含批改积分
+    review_score     INTEGER,           -- 0–100，NULL 表示未批改
+    review_comment   TEXT,
+    reviewed_at      DATETIME,
+    reviewed_by      INTEGER REFERENCES users(id),
+    review_points    INTEGER NOT NULL DEFAULT 0, -- 实际已发放批改积分
     UNIQUE (homework_id, student_id)
+);
+
+-- 作业批改档位（admin 管理，独立于 point_rules）
+CREATE TABLE homework_review_rules
+(
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    min_score  INTEGER NOT NULL UNIQUE,
+    points     INTEGER NOT NULL DEFAULT 0,
+    enabled    BOOLEAN NOT NULL DEFAULT 1,
+    updated_by INTEGER REFERENCES users(id),
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 -- 签到
@@ -458,6 +474,20 @@ CREATE TABLE idiom_questions
 
 > 所有积分发放统一读 `point_rules`，修改后立即生效；规则禁用则不发放。
 
+**作业批改档位种子**（表 `homework_review_rules`，PRD 5.3）
+
+| min_score | points | 说明 |
+|-----------|--------|------|
+| 90 | 5 | 优秀 |
+| 80 | 3 | 良好 |
+| 60 | 1 | 合格 |
+
+> 与 `point_rules` 分工不同：`point_rules` 是「一次行为发多少分」的单值规则，
+> 本表是「分数区间 → 积分」的档位映射，admin 可在积分规则页增改启停。
+> 匹配规则：取所有 `enabled` 且 `min_score <= score` 的档位中 `min_score` **最大**的一档；
+> 无匹配则发 0 积分（不报错）。档位表为空会导致批改**静默**发 0 分，
+> 故随 `initial_data` 与 `export_ddl` 一同初始化。
+
 ---
 
 ## 5. 功能需求
@@ -530,6 +560,8 @@ POST /classes/regenerate-bind-code {student_id}                  teacher(admin �
 - 布置作业：标题、描述、科目、截止时间
 - 查看作业列表与完成情况（学生、状态、开始时间、提交时间、用时、积分）
 - 删除作业（仅无人提交时）
+- 批改作业：打分（0–100）+ 评语，学生端可见
+- 待批改清单：跨作业汇总已提交但未批改的记录
 
 **时间采集**
 
@@ -537,6 +569,16 @@ POST /classes/regenerate-bind-code {student_id}                  teacher(admin �
 - 「提交作业」记录 `submit_time`，`duration = submit - start`
 - 超截止时间标记 `late`
 - 用时 <1 分钟标记待审核（异常）
+
+**批改与积分**
+
+- 分数按「作业批改档位」表（`homework_review_rules`，分数下限 → 积分）换算为**额外积分**，admin 可配档位
+- 匹配规则：取所有 `enabled` 且 `min_score <= score` 的档位中 `min_score` **最大**的一档；无匹配则发 0 积分（不报错）
+- 允许改分，积分按**差额**补发/回扣：`target = 新分数档位积分`，`granted = 已发放`，`delta = target - granted`
+- 学生余额不足时**扣到 0 为止、不追扣**，流水记实际扣减额（欠额不再追回）
+- 批改积分记 `point_logs.type='review'`，与提交时自动发放的 `homework` 类型隔离
+- 只有**已提交**的作业可批改；未提交返回 400「学生尚未提交」
+- 批改并发控制：批改时对 `homework_records` 行与 `users` 行加锁（`SELECT ... FOR UPDATE`），锁序固定为 `homework_records → users`，避免同一份作业重复发分与同一学生并发批改时余额互相覆盖
 
 ```
 POST /homework/create   {class_id, title, description, subject, deadline}  teacher
@@ -547,7 +589,11 @@ POST /homework/records  {homework_id}                                      teach
 POST /homework/delete   {homework_id}                                      teacher
 POST /homework/start    {homework_id}                                      student
 POST /homework/submit   multipart: homework_id, text_content, file?        student
+POST /homework/review   {homework_id, student_id, score, comment?}          teacher
+POST /homework/pending  {page, size}                                       teacher
 ```
+
+`/homework/review` 响应 `data` 含 `record`（含批改字段）、`points_delta`（目标差额：正=应补发，负=应回扣）、`awarded_points`（实际净变动：正=实发，负=实扣；余额不足时其绝对值小于 `|points_delta|`）。
 
 ---
 
@@ -705,6 +751,14 @@ POST /admin/rules/update       {rule_key, points, daily_limit, extra_config, ena
 POST /admin/rules/batch-update {rules: [{rule_key, points, ...}]}
 ```
 
+**作业批改档位**（PRD 5.3，档位区间映射，独立于 `point_rules`）
+
+```
+POST /admin/homework-review-rules/list    {}
+POST /admin/homework-review-rules/create  {min_score, points}
+POST /admin/homework-review-rules/update  {id, points?, enabled?}
+```
+
 #### 5.8.4 文章管理（全量）
 
 - 查看全部文章（按作者角色/作者/状态/关键词筛选）
@@ -797,6 +851,8 @@ POST /homework/records
 POST /homework/delete
 POST /homework/start
 POST /homework/submit
+POST /homework/review
+POST /homework/pending
 
 # 签到
 POST /checkin/do
@@ -848,6 +904,9 @@ POST /admin/rules/list
 POST /admin/rules/detail
 POST /admin/rules/update
 POST /admin/rules/batch-update
+POST /admin/homework-review-rules/list
+POST /admin/homework-review-rules/create
+POST /admin/homework-review-rules/update
 POST /admin/idioms/import
 POST /admin/idioms/list
 POST /admin/idioms/update
