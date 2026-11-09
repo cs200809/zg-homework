@@ -79,14 +79,6 @@ export async function post<T = unknown>(
   return payload.data
 }
 
-/** 分页响应结构（PRD 3.2） */
-export interface Paged<T> {
-  list: T[]
-  total: number
-  page: number
-  size: number
-}
-
 /**
  * 把服务端返回的相对文件路径拼成可访问的绝对地址（迭代 v2.1）。
  *

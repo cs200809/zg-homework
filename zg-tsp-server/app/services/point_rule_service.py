@@ -9,7 +9,6 @@ import json
 import threading
 import time
 from dataclasses import dataclass
-from datetime import date
 
 from sqlalchemy.orm import Session
 
@@ -103,13 +102,6 @@ class RuleService:
         if rule is None or not rule.enabled:
             return None
         return rule.points
-
-    def get_daily_limit(self, db: Session, rule_key: str) -> int | None:
-        """取日上限；规则不存在或禁用返回 0（视为不允许发放）。"""
-        rule = self.get(db, rule_key)
-        if rule is None or not rule.enabled:
-            return 0
-        return rule.daily_limit if rule.daily_limit is not None else 0
 
     def get_extra(self, db: Session, rule_key: str, key: str, default=None):
         """取扩展配置里的单项，如 single_article_limit。"""

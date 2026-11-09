@@ -111,12 +111,3 @@ class AdminUserItem(BaseModel):
     status: str
     must_change_password: bool
     created_at: datetime
-
-
-class PagedResponse(BaseModel):
-    """分页响应（PRD 3.2）：{list, total, page, size}。"""
-
-    list: list
-    total: int
-    page: int
-    size: int

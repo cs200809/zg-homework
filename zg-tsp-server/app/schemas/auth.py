@@ -69,9 +69,3 @@ class LoginResponse(BaseModel):
     expire_at: int
     user: UserInfo
     must_change_password: bool = False
-
-
-class WechatUserInfo(BaseModel):
-    """/auth/me 返回体。"""
-
-    user: UserInfo

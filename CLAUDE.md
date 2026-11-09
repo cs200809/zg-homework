@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 仓库形态
 
-本仓库是**五个独立仓库的聚合快照**，不是一个可整体构建的单体：
+本项目分为五个独立仓库，不是一个可整体构建的单体。**当前聚合检出只有 server、web、docs；Android 和 iOS 目录不在本检出中**。本机的移动端独立仓库位于 `../zg-tsp-repos/`，其他环境需先确认其位置。下表描述完整工作区，而非保证所有目录都在当前检出：
 
 | 目录 | 内容 | 技术栈 |
 |------|------|--------|
@@ -13,15 +13,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `zg-tsp-android/` `zg-tsp-ios/` | 移动端 | Flutter 3.47 / Dart 3.13（Provider，非 go_router） |
 | `zg-tsp-docs/` | **契约与验收**（PRD、config、ENV_SETUP、验收脚本） | Markdown / Python |
 
-**契约的唯一权威来源是 `zg-tsp-docs/sys_doc/PRD.md`**（v2.0，1012 行）。它同时承担了 PRD、API 契约、数据库建表 SQL、权限矩阵、验收清单五重角色。改接口前先读它；改完后要同步 `zg-tsp-web/src/api/types.ts` 和 `zg-tsp-*/lib/core/models.dart`（这两份是 PRD 的手工副本，无自动生成）。
+**需求与 API 契约的权威来源是 `zg-tsp-docs/sys_doc/PRD.md`**（v2.1）。它同时承担了 PRD、API 契约、数据库建表 SQL、权限矩阵、验收清单五重角色。改接口前先读它；改完后要同步 `zg-tsp-web/src/api/types.ts` 和 `zg-tsp-*/lib/core/models.dart`（这两份是 PRD 的手工副本，无自动生成）。
 
 ### 三个必须知道的结构性事实
 
-1. **Flutter 两端的 `lib/` 是物理复制的两份**。`zg-tsp-android/lib/` 与 `zg-tsp-ios/lib/` 20 个 Dart 文件几乎逐字节相同，差异只在包名（`zg_tsp_android` vs `zg_tsp_ios`）、`core/config.dart` 的注释、以及 `main.dart` 首行的工程名注释。**改任何一份都必须手工同步另一份，没有 CI 校验。**
+1. **Flutter 两端的 `lib/` 是物理复制的两份**，位于独立的 Android、iOS 仓库，而不是当前聚合检出。两端代码基本相同，**改任何一份都必须检查并手工同步另一份**。
 
-2. **`scripts/dev.sh` 启动的不一定是本目录的代码**。`REPOS_DIR` 探测顺序是 `../zg-tsp-repos` → `$ROOT` → `~/zg-tsp-repos`。若 `../zg-tsp-repos/` 存在，脚本用的是那里的独立仓库代码，与本快照不同步。改完代码后要确认自己改的那份真的被运行。
+2. **`scripts/dev.sh` 启动的不一定是本目录的代码**。有效的 `REPOS_DIR` 优先；否则探测 `../zg-tsp-repos` → `$ROOT` → `~/zg-tsp-repos`。若命中独立仓库，其代码可能与本检出不同步；改完代码后确认运行的是哪一份。
 
-3. **PRD 里的建表 SQL 是 SQLite 方言**，而服务端实际跑 MySQL 8。库表结构以 `zg-tsp-server/app/models/entities.py`（14 张表）为准，PRD 第 4.1 节仅作参考。
+3. **PRD 里的建表 SQL 是 SQLite 方言**，而服务端实际跑 MySQL 8。库表结构以 `zg-tsp-server/app/models/entities.py`（15 张表）为准，PRD 第 4.1 节仅作参考。
 
 ## 常用命令
 
@@ -50,7 +50,7 @@ uvicorn app.main:app --host 127.0.0.1 --port 8000
 
 它导入 `zg-tsp-docs/sql/init.sql` —— 该文件由 `python -m app.seed.export_ddl` **从 ORM 生成**（改了 `app/models/entities.py` 要重新生成）。admin 密码以 `__ADMIN_BCRYPT_HASH__` 占位符写入，由脚本运行时替换成 bcrypt 哈希；**直接 `mysql < init.sql` 会导致 admin 无法登录**。
 
-**健康检查是 POST，不是 GET**：`curl -X POST http://127.0.0.1:8000/health` → `{"code":0,"message":"ok","data":{"status":"ok"}}`。浏览器直接打开会 405（CORS `allow_methods` 只放行 `POST, OPTIONS`）。
+**健康检查是 POST，不是 GET**：`curl -X POST http://127.0.0.1:8000/health` 返回统一响应，`data` 含 `status` 和当前 `env`。浏览器直接打开会 405（CORS `allow_methods` 只放行 `POST, OPTIONS`）。
 
 测试（**需要可连的 MySQL**，不 mock、不用 sqlite）：
 
@@ -61,13 +61,13 @@ pytest tests/test_auth.py::test_login_success   # 单用例
 pytest -k "login" -x -vv
 ```
 
-测试直接跑在开发库 `zg_tsp` 上，靠 `test_` 前缀 + 随机后缀隔离，**只 INSERT/UPDATE，从不 DELETE/TRUNCATE**，所以跑完库里会留垃圾数据。清理：`python -m app.utils.purge_test_data --dry-run` / `--by-keep-list`（只保留种子数据）。要隔离就跑：`DATABASE_URL=mysql+pymysql://.../zg_tsp_other pytest`。
+测试使用配置的真实 MySQL，会提交数据并调用包括删除在内的业务接口，可能留下数据；**使用专用隔离数据库，不要假定测试只插入或更新**。例如 `DATABASE_URL=mysql+pymysql://.../zg_tsp_other pytest`。`tests/` 被 gitignore，干净检出可能没有测试文件。清理工具有破坏性，先查看 `python -m app.utils.purge_test_data --dry-run` 的结果并确认目标数据库。
 
 ### Web 端
 
 ```bash
 cd zg-tsp-web
-npm install
+npm install        # Node >=20
 npm run dev        # vite --mode development，端口 5173
 npm run build      # = tsc -b && vite build --mode production（含类型检查）
 npm run build:dev
@@ -79,7 +79,7 @@ npm run preview
 ### 移动端
 
 ```bash
-cd zg-tsp-android   # 或 zg-tsp-ios
+cd ../zg-tsp-repos/zg-tsp-android   # 或同级的 zg-tsp-ios；按实际独立仓库位置调整
 flutter pub get
 flutter analyze     # analysis_options.yaml 是 flutter_lints 默认值，零自定义规则
 flutter test        # 仅 test/config_test.dart，6 个离线用例，无 widget/API 测试
@@ -89,15 +89,14 @@ flutter run --dart-define=API_BASE_URL=http://10.0.2.2:8000   # Android 模拟�
 打包**必须走 `scripts/build.sh`**，它会先做环境预检并自动注入渠道配置：
 
 ```bash
-REPOS_DIR="$PWD" ./scripts/build.sh --check          # 只做环境预检（Flutter/Xcode/CocoaPods/SDK/JDK/签名）
-REPOS_DIR="$PWD" ./scripts/build.sh android dev      # → dist/android-dev-<version>.apk
-REPOS_DIR="$PWD" ./scripts/build.sh android prod     # → dist/android-prod-<version>.aab
-REPOS_DIR="$PWD" ./scripts/build.sh ios dev          # → ipa
+# 从聚合仓库根目录执行；按实际独立仓库位置调整 REPOS_DIR
+REPOS_DIR="$PWD/../zg-tsp-repos" ./scripts/build.sh android dev --check
+REPOS_DIR="$PWD/../zg-tsp-repos" ./scripts/build.sh android dev   # → APK
+REPOS_DIR="$PWD/../zg-tsp-repos" ./scripts/build.sh android prod  # → AAB
+REPOS_DIR="$PWD/../zg-tsp-repos" ./scripts/build.sh ios dev       # → IPA
 ```
 
-**`REPOS_DIR="$PWD"` 不可省**：脚本默认探测 `../zg-tsp-repos`（独立仓库），构建的不是本快照的代码（详见「本机构建环境」）。
-
-iOS 出正式包还需签名团队：`DEVELOPMENT_TEAM=<你的 Team ID> REPOS_DIR="$PWD" ./scripts/build.sh ios dev`。
+构建前确认 `REPOS_DIR` 所指目录确实包含目标移动端；当前聚合检出没有移动端，不能用 `REPOS_DIR="$PWD"` 构建。预检需带平台参数。iOS 签名团队可通过 `DEVELOPMENT_TEAM=<你的 Team ID>` 指定。`build.sh` 默认 dev API 为 `127.0.0.1`、prod 为占位域名 `https://api.example.com`；设置 `API_BASE_URL` 为设备可访问的地址。`dev.sh` 则使用 `API_TARGET`，Android 模拟器访问宿主机通常用 `10.0.2.2`。
 
 ### 顶层运维脚本
 
@@ -106,16 +105,16 @@ iOS 出正式包还需签名团队：`DEVELOPMENT_TEAM=<你的 Team ID> REPOS_DI
 ./scripts/split_repos.sh split|push|status     # subtree 拆分为 5 个独立仓库
 ```
 
-`dev.sh` 是 POSIX `sh`（**不能用数组、`[[ ]]`、进程替换**），日志与 PID 落在 `.dev-logs/`（`dev.pids` 格式为 `<模块名> <pid>`）。`build.sh` 是 bash 3.2 兼容（macOS 自带）。
+`dev.sh` 是 POSIX `sh`（**不能用数组、`[[ ]]`、进程替换**），日志与 PID 落在 `.dev-logs/`。`build.sh` 是 bash 3.2 兼容。**`split_repos.sh split` 会删除已有目标目录后重建；`dev.sh stop` 可能终止占用配置端口的其他进程。**执行前确认目标及影响。`init.sh` 也会自动探测仓库位置，执行前确认 SQL 和数据库来源。
 
 ### 验收
 
 ```bash
-python zg-tsp-docs/scripts/acceptance_check.py     # 业务验收，16 组断言；需服务端已启动
+ACCEPTANCE_ADMIN_PASSWORD='<admin密码>' python zg-tsp-docs/scripts/acceptance_check.py  # 需服务端已启动
 python zg-tsp-docs/scripts/independence_check.py   # 模块独立性静态检查，无需运行时
 ```
 
-`acceptance_check.py` 硬编码 `http://127.0.0.1:8000`，无参数；会改 `point_rules` 再改回。**两个脚本都要求五个目录同级检出**（脚本内部 `sys.path` 插入 `../zg-tsp-server`）。
+`acceptance_check.py` 硬编码 `http://127.0.0.1:8000`，需要管理员密码，会通过真实接口产生持久测试数据并修改积分规则。独立性检查要求五个模块目录同级；当前聚合检出缺少移动端，不能假定该检查完整通过。
 
 ## 服务端架构
 
@@ -128,7 +127,7 @@ routers → schemas/（仅 auth、admin 有独立文件，其余 Pydantic 模型
 
 ### 全 POST + 统一响应
 
-所有业务接口都是 `POST` + JSON Body，参数不进 URL。响应固定 `{code, message, data}`，错误码 0/400/401/403/404/429/500。分页数据在 `data` 里嵌 `{list, total, page, size}`。
+业务接口通常使用 `POST` + JSON Body，参数不进 URL；作业提交和文章文件上传使用 multipart 表单。`/uploads` 静态文件通过 GET 提供，挂载本身没有鉴权依赖。业务响应为 `{code, message, data}`，分页数据在 `data` 里嵌 `{list, total, page, size}`。
 
 `app/utils/response.py` 提供 `ok()` / `fail()`；`app/main.py` 注册三个全局异常处理器。**router 里抛 `HTTPException` 时 `detail` 必须是 `{"code": ..., "message": ...}` 字典**，否则 handler 会退化成 `fail(status_code, str(detail))`。各 router 文件顶部自带一份 `_bad_request/_forbidden/_not_found` 私有 helper 来保证这个形状。
 
@@ -152,7 +151,7 @@ JWT payload 只有 `user_id/role/exp`，**role 在 payload 里但从不用于判
 
 ### 数据层
 
-`app/db/repo.py`（532 行）是唯一数据访问入口，SQLAlchemy 2.0 `select()` + `db.scalar()`。**Repo 方法只 `db.add()` + `db.flush()`（回填主键），不 commit**——commit 由 router 层负责。没有 Unit of Work。
+`app/db/repo.py` 是共享数据访问层，但并非唯一入口：router 和 service 也直接使用 SQLAlchemy session。事务通常由 router 提交，Repo 通常负责 add/flush 而不 commit；没有 Unit of Work。积分操作依赖学生行锁及锁定读来控制并发，修改时保留这些语义。
 
 `app/db/session.py`：`pool_pre_ping=True` + `pool_recycle=3600`（应对 MySQL 8h 空闲断连），`autoflush=False`。
 
@@ -160,13 +159,13 @@ MySQL 适配约定：无真 BOOLEAN，用 `Boolean`（映射 TINYINT(1)）；JSO
 
 ### 无迁移框架
 
-没有 Alembic。`create_all()` **只建缺失的表，不改已有表结构**。改了 ORM 字段后跑 `python -m app.seed.apply_comments` 补齐（它读 `information_schema` 对比 ORM 的 `comment` 后 `ALTER TABLE ... MODIFY COLUMN`，会手动带上 `NOT NULL`/`DEFAULT`/`AUTO_INCREMENT`，否则会丢属性）。
+没有 Alembic。`create_all()` **只建缺失的表，不给已有表增加列或索引**；`python -m app.seed.apply_comments` 只补已有字段的注释，不能替代迁移。存量库升级参见 `app/seed/migrate_v21.py`、`migrate_article_soft_delete.py` 和 `migrate_homework_review.py`。作业批改迁移前先备份、停止业务写入并确认连接，先运行 `python -m app.seed.migrate_homework_review --check`，再按脚本说明执行；留意 MySQL DDL 隐式提交和已有空档位表的处理。
 
 ### 积分规则的两个语义陷阱
 
 `point_rules.daily_limit` 是「**每天最多 N 次**」，不是积分上限。`checkin_daily = {points: 5, daily_limit: 1}` 意为「每天签到 1 次，每次给 5 分」。命中次数上限时 `award()` 直接返回 0，**不做部分发放**。唯一例外是游戏（`award_game()`），那里 `daily_limit` 当作**跨规则的当日积分总和上限**，超出时按剩余额度部分发放。
 
-`point_logs` 表没有 `rule_key` 列，只有 `type`（checkin/homework/reading/game/consume），所以日上限统计粒度是 type。家长扣分 `consume()` 走负数流水 + `operator_id`，**不查 `point_rules`**。
+`point_logs` 表没有 `rule_key` 列，按 `type` 区分流水。家长扣分 `consume()` 走负数流水 + `operator_id`，**不查 `point_rules`**。作业批改使用独立的 `homework_review_rules` 档位和 `review` 流水；重批改按目标变化调整积分，余额不足时扣至零、未扣足部分永久豁免，实际累计变动可能不同于目标积分。
 
 ### 其它值得知道的实现
 
@@ -181,7 +180,7 @@ MySQL 适配约定：无真 BOOLEAN，用 `Boolean`（映射 TINYINT(1)）；JSO
 ```
 src/
 ├── api/         client.ts（axios 实例 + post 封装）+ auth/classes/student/parent/adminIdioms + types.ts
-├── components/  AdminLayout.tsx（唯一公共组件）
+├── components/  AdminLayout.tsx、ReviewModal.tsx 等公共组件
 ├── router/      index.tsx（路由 + 角色守卫）
 ├── store/       auth.ts（Zustand 单一 store）
 └── pages/       common/ student/ teacher/ admin/ parent/
@@ -191,7 +190,7 @@ src/
 - **API 层**：`api/client.ts` 里 `post<T>()` 封装统一响应，`code !== 0` 时抛带 `code` 属性的 Error。**没有 401/403 全局拦截**——运行期 token 过期不会自动登出，只在应用启动的 `store/auth.ts` `init()` 里做一次 `/auth/me` 探测并清 localStorage。
 - **角色分流两段式**：路由守卫 `Protected roles={[...]}`（`router/index.tsx`）+ 菜单白名单 `MENUS: Record<Role, NavItem[]>`（`components/AdminLayout.tsx`）。admin 首登未改密会被强制跳到 `/change-password`。
 - **状态**：Zustand 单一 store，手动读写 localStorage（key `token` / `user`），无 persist 中间件。
-- **路由无懒加载**：`router/index.tsx` 静态 import 全部 21 个页面，无 `lazy`/`Suspense`。
+- **路由无懒加载**：`router/index.tsx` 静态 import 全部页面，无 `lazy`/`Suspense`。
 - **页面数据获取**：`useCallback` + `useEffect` + `useState` 三件套，`Promise.all` 并发拉取，错误走 `message.error`。全站无 react-query。
 - **已知职责错位**：`api/parent.ts` 里混放了 admin 的全部接口（invite/user/rule/article/stats），文件命名与内容不符。
 
@@ -212,7 +211,7 @@ lib/
 - **登录/改密后的跳转由 `RootGate` 自动完成**：`AuthState.login()` / `markPasswordChanged()` 会 `notifyListeners()`，`RootGate`（`main.dart`）`context.watch<AuthState>()` 后按 `user.role` switch 到对应角色首页。页面里**不要**再写 `pushReplacementNamed('/home')` 这类跳转。
 - **角色分流**在 `main.dart` 的 `RootGate`：未登录 → LoginPage；`mustChangePassword` → ChangePasswordPage；否则按 `user.role` switch 到 `StudentHome`/`ParentHome`/`TeacherHome`/`AdminHome`（每个都是 `IndexedStack` + `NavigationBar` 自绘 tab）。用 `ValueKey('${id}:${role}')` 在账号变化时重建，避免沿用上一个角色的导航状态。
 - **API 层自研**：`core/api_client.dart` 单例 + `http` 包（不是 dio），全 POST，`code !== 0` 抛 `ApiException`，网络/超时统一转 `ServiceUnavailableError`。`core/apis.dart` 分 `AuthApi/StudentApi/TeacherApi/ParentApi/AdminApi` 五个单例约 70 个端点。
-- **本地存储**：SharedPreferences 存 `token` 和 `user`（JSON 字符串）。Token 无刷新机制、无过期判断，靠启动时 `/auth/me` 兜底。`ApiClient` 同样**无 401 自动登出**。
+- **本地存储**：SharedPreferences 存 `token` 和 `user`（JSON 字符串）。Token 无刷新机制、无过期判断，靠启动时 `/auth/me` 兜底。Web 和移动端启动恢复时，只要 `/auth/me` 失败（包括网络故障）就会清除本地登录信息；运行期间 `ApiClient` **无 401 自动登出**。
 
 ### 渠道（flavor）机制
 
@@ -239,19 +238,19 @@ lib/
 
 4. **Web 无 401 全局拦截** —— 运行期 token 过期不会自动登出，只在应用启动的 `init()` 里做一次 `/auth/me` 探测。
 
-5. **Web 路由无懒加载** —— 21 个页面全静态 import，首屏包含全部页面。
+5. **Web 路由无懒加载** —— 页面全静态 import，首屏包含全部页面。
 
 6. **`api/parent.ts` 里混放了 admin 的全部接口**（invite/user/rule/article/stats），文件职责与命名不符。
 
 7. **`.env.production` 与 `nginx.conf` 的 `/api/` 反代语义冲突** —— 生产 baseURL 是绝对域名 `https://api.example.com`（占位符），nginx 反代段形同虚设；且 nginx 反代指向的 `server:8000` 无 compose 支撑。
 
-8. **移动端 5 个依赖声明未使用**：`image_picker` / `file_picker` / `fl_chart` / `intl` / `cupertino_icons` 在 `lib/` 中零引用（`postMultipart` 已实现但作业提交只传文本）。注意 `file_picker` 虽未使用仍会被编译进 APK 并参与 compileSdk 校验。
+8. **移动端作业附件支持不完整**：独立仓库的 `submitHomework` 接受 `filePath` 但未将其附加到请求，学生端作业提交只传文本。`file_picker` 已用于文章文件选择，不可视为未使用依赖。
 
 9. **`zg-tsp-docs/sys_doc/PRD.md` 2.2.1 与实现仍有出入**：PRD 第 4.1 节的建表 SQL 是 SQLite 方言，权威定义在 `zg-tsp-server/app/models/entities.py`。
 
-## 已修复项（勿重复踩）
+## 历史修复记录
 
-以下问题在本轮已修复并**实测验证**，不要当成现存缺陷：
+以下是此前的修复记录；移动端路径指独立仓库，当前聚合检出不包含移动端。实际状态应以正在修改的检出为准：
 
 - **移动端 release APK 的 INTERNET 权限**：已在 `zg-tsp-android/android/app/src/main/AndroidManifest.xml` 主清单声明（Flutter 模板只在 `src/debug/`、`src/profile/` 声明，导致 release 包无网络权限）。`aapt2 dump permissions` 实测产物已含 `android.permission.INTERNET`。
 - **移动端登录后崩溃**：原先 `pushReplacementNamed('/home')` / `pushNamed('/register')` / `pushNamed('/homework/${id}')` 在无路由表的 `MaterialApp` 上必抛 `Could not find a generator for route`。现已改为：登录/改密成功后交由 `RootGate` 监听 `AuthState` 自动按角色分流（不再做 Navigator 跳转），注册页与作业详情页改用 `MaterialPageRoute`。
@@ -264,18 +263,14 @@ lib/
 - **移动端 pubspec**：无效的 `flavors:` 键已删除（Flutter 不读它），改为注释说明真实机制；`sdk` 约束从 `>=3.4.0` 对齐到 `>=3.13.0`；`file_picker` 升到 `^10.3.10`（8.x 的插件 compileSdk 仍是 android-34，会导致 AAR metadata 校验失败、release 构建中断）。
 - **`independence_check.py` 第 6 项**：原先 grep pubspec 的 `flavors:` 键判断双渠道，与真实机制不符，已改为校验 Android `productFlavors{dev,prod}` 与 iOS `ios_flavor.py` 生成器。
 
-## 本机构建环境（快照曾落后于独立仓库，已对齐）
+## 本机构建环境
 
-`../zg-tsp-repos/` 是五个独立仓库的检出，其 Android 工程带了三处**国内网络适配**改动，聚合快照原先缺失，导致本地构建失败。已移植到 `zg-tsp-android/android/`：
+`../zg-tsp-repos/` 是本机五个独立仓库的检出；Android 工程使用以下**国内网络适配**，其他环境应先核实配置：
 
 - `gradle/wrapper/gradle-wrapper.properties`：`distributionUrl` 指向腾讯云镜像（官方地址 307 跳 GitHub 会超时；Gradle 本地缓存按 URL 哈希匹配，换 URL 就要重新下载）
 - `build.gradle.kts` / `settings.gradle.kts`：阿里云 Maven 镜像优先，缺失构件自动回落官方源
 
-**改动时务必确认构建的是哪份代码**：`scripts/build.sh` 与 `scripts/dev.sh` 的 `REPOS_DIR` 探测顺序是 `../zg-tsp-repos` → `$ROOT` → `~/zg-tsp-repos`，**默认命中的是独立仓库而不是本快照**。构建本快照要显式指定：
-
-```bash
-REPOS_DIR="$PWD" ./scripts/build.sh android dev
-```
+**改动时务必确认构建的是哪份代码**：`scripts/build.sh` 与 `scripts/dev.sh` 优先使用有效的 `REPOS_DIR`，否则自动探测 `../zg-tsp-repos` → `$ROOT` → `~/zg-tsp-repos`。无效或不完整的覆盖值可能回退自动探测；检查脚本输出。当前聚合检出没有移动端，不能直接构建本快照的移动端。
 
 `scripts/dev.sh` 现在会在启动前打印「代码来源与新鲜度报告」（REPOS_DIR 命中哪份代码、五模块 git 状态、与本快照的差异条目数），用它确认跑的是哪一份。
 
@@ -293,6 +288,6 @@ REPOS_DIR="$PWD" ./scripts/build.sh android dev
 ## Git 约定
 
 - 主分支 `main`。五个独立仓库通过 `git subtree split --prefix=<模块>` 拆出，历史保留在 `split/<模块>` 分支（当前本地无这些分支，需 `split_repos.sh split` 重新生成）。
-- **服务端测试全部不入库**：`zg-tsp-server/tests/` 已在 `.gitignore` 中（根仓库与 `zg-tsp-server/.gitignore` 都有该规则），已跟踪的 11 个测试文件已 `git rm --cached`，本地文件保留。测试直接跑在开发库 `zg_tsp` 上、只增不删，属于本地联调资产。
+- **服务端测试不入库**：`zg-tsp-server/tests/` 被 gitignore，本地测试属于联调资产，干净检出不一定存在。测试连接真实数据库且可能执行删除，使用专用隔离库。
 - `.dev-logs/`、`/dist/`、`.venv/`、各 `.env`、`*.bak`（脚本注入渠道配置的备份）、`android/key.properties`、`ios/Flutter/{Dev,Prod}.xcconfig` 均不入库。
 - 根 `.claude/settings.local.json` 只有 `permissions.allow` 一个节点（314 条），无 deny/ask/env/hooks/mcpServers 配置。
