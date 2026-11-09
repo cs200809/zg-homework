@@ -74,7 +74,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 
 ### 部署用数据库初始化
 
-部署到空机器时，一条命令完成「建库 → 建 14 张表 → 写积分规则 → 建 admin」：
+部署到空机器时，一条命令完成「建库 → 建表 → 写积分规则及批改档位 → 建 admin」：
 
 ```bash
 ./scripts/init.sh              # 幂等，可重复执行
@@ -83,7 +83,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 
 它导入的是 `zg-tsp-docs/sql/init.sql` —— 该文件由 `python -m app.seed.export_ddl`
 从 ORM 生成，含全部表的中文 COMMENT。admin 初始密码取 `ADMIN_INIT_PASSWORD`
-环境变量，未设则随机生成并打印一次，首登强制改密。
+环境变量，未设则随机生成。仅在本次密码生效时显示随机密码或提示使用了环境变量，首登强制改密。已有正常密码不会被覆盖，`ADMIN_INIT_PASSWORD` 不能用于强制重置密码；已有 admin 的密码哈希恰为 `__ADMIN_BCRYPT_HASH__` 时会被修复。直接导入未经替换的 SQL 会创建表和规则，但不会创建 admin；应使用初始化脚本，或先将占位符替换为有效 bcrypt 哈希再导入。
 
 需要联调数据（测试账号、班级、成语题库）时，另跑 `python -m app.seed.initial_data`。
 

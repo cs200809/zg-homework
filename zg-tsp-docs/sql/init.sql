@@ -5,14 +5,13 @@
 -- 权威来源：`zg-tsp-server/app/models/entities.py`（15 张表）。
 -- 改了 ORM 后重新执行该脚本以保持同步。
 --
--- 用法（推荐经 scripts/init.sh，它会替换 admin 密码占位符）：
---     mysql --default-character-set=utf8mb4 <库名> < init.sql
+-- 用法：通过 scripts/init.sh 替换 admin 密码占位符并导入。
+-- 直接导入仅创建表和规则，不创建 admin。
 --
 -- 说明：
 --   · 全部语句幂等，可重复执行
 --   · 不创建物理外键，关联完整性由应用维护
---   · admin 密码以占位符 __ADMIN_BCRYPT_HASH__ 写入，
---     直接用 mysql 导入会导致 admin 无法登录，必须经 scripts/init.sh
+--   · 未替换密码占位符时跳过 admin；已有 admin 不会被覆盖
 -- ============================================================================
 
 SET NAMES utf8mb4;
@@ -307,4 +306,6 @@ WHERE NOT EXISTS (SELECT 1 FROM homework_review_rules WHERE min_score = 60);
 INSERT INTO users (username, password_hash, role, nickname, total_points, status, must_change_password)
 SELECT 'admin', '__ADMIN_BCRYPT_HASH__', 'admin', '超级管理员', 0, 'active', 1
 FROM DUAL
-WHERE NOT EXISTS (SELECT 1 FROM users WHERE username = 'admin');
+WHERE BINARY '__ADMIN_BCRYPT_HASH__' <> BINARY CONCAT('__ADMIN_', 'BCRYPT_HASH__')
+  AND NOT EXISTS (SELECT 1 FROM users WHERE username = 'admin')
+ON DUPLICATE KEY UPDATE id = users.id;
