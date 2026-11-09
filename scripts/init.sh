@@ -246,18 +246,17 @@ mysql_run "${DB_NAME}" < "${TMP_SQL}" || die "导入 SQL 失败"
 # 期望值从 init.sql **动态推导**而非硬编码 —— 加表时不必改脚本，
 # 否则每加一张表部署就会误报「校验失败」。
 EXPECT_TABLE_COUNT=$(grep -c 'CREATE TABLE IF NOT EXISTS' "${INIT_SQL}" 2>/dev/null || echo 0)
-EXPECT_FK_COUNT=$(grep -c 'FOREIGN KEY' "${INIT_SQL}" 2>/dev/null || echo 0)
 EXPECT_REVIEW_RULE_COUNT=$(grep -c 'INSERT INTO homework_review_rules' "${INIT_SQL}" 2>/dev/null || echo 0)
 
 TABLE_COUNT=$(mysql_run -N -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='${DB_NAME}';" 2>/dev/null || echo 0)
-FK_COUNT=$(mysql_run -N -e "SELECT COUNT(*) FROM information_schema.table_constraints WHERE table_schema='${DB_NAME}' AND constraint_type='FOREIGN KEY';" 2>/dev/null || echo 0)
+FK_COUNT=$(mysql_run -N -e "SELECT COUNT(*) FROM information_schema.table_constraints WHERE table_schema='${DB_NAME}' AND constraint_type='FOREIGN KEY';" 2>/dev/null) || die "校验失败：无法查询外键数量"
 RULE_COUNT=$(mysql_run -N -e "SELECT COUNT(*) FROM \`${DB_NAME}\`.point_rules;" 2>/dev/null || echo 0)
 REVIEW_RULE_COUNT=$(mysql_run -N -e "SELECT COUNT(*) FROM \`${DB_NAME}\`.homework_review_rules;" 2>/dev/null || echo 0)
 ADMIN_EXISTS=$(mysql_run -N -e "SELECT COUNT(*) FROM \`${DB_NAME}\`.users WHERE username='admin';" 2>/dev/null || echo 0)
 ADMIN_MUST_CHANGE=$(mysql_run -N -e "SELECT must_change_password FROM \`${DB_NAME}\`.users WHERE username='admin';" 2>/dev/null || echo "")
 
 [ "${TABLE_COUNT}" = "${EXPECT_TABLE_COUNT}" ] || die "校验失败：期望 ${EXPECT_TABLE_COUNT} 张表，实际 ${TABLE_COUNT} 张"
-[ "${FK_COUNT}" = "${EXPECT_FK_COUNT}" ] || warn "外键数量为 ${FK_COUNT}（期望 ${EXPECT_FK_COUNT}），请检查"
+[ "${FK_COUNT}" = "0" ] || die "校验失败：期望零外键，实际 ${FK_COUNT} 个；已有库需单独迁移"
 # 批改档位为空会导致批改静默发 0 积分（匹配规则是「无匹配则发 0，不报错」），
 # 故必须校验档位种子已落地。
 [ "${REVIEW_RULE_COUNT}" = "${EXPECT_REVIEW_RULE_COUNT}" ] || die "校验失败：期望 ${EXPECT_REVIEW_RULE_COUNT} 条批改档位，实际 ${REVIEW_RULE_COUNT} 条"

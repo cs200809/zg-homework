@@ -11,12 +11,18 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Alert, App, Button, Card, Result, Space, Spin, Tag, Typography } from 'antd'
 import { useParams } from 'react-router-dom'
 
-import { fileUrl } from '../../api/client'
+import { CODE, fileUrl } from '../../api/client'
 import { articleApi } from '../../api/student'
 import type { Article } from '../../api/types'
 
 /** 心跳间隔：与 PRD 5.5 一致（服务端容差 ±10s） */
 const HEARTBEAT_MS = 30_000
+
+function isArticleNotFound(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false
+  const e = error as { code?: number; response?: { status?: number; data?: { code?: number } } }
+  return e.code === CODE.NOT_FOUND || e.response?.status === 404 || e.response?.data?.code === CODE.NOT_FOUND
+}
 
 export default function StudentArticle() {
   const { id } = useParams()
@@ -32,10 +38,27 @@ export default function StudentArticle() {
   const bodyRef = useRef<HTMLDivElement>(null)
   /** 可见且在滚动范围内时才算有效阅读时长 */
   const activeRef = useRef(false)
+  const unavailableRef = useRef(false)
+  /** 当前文章 ID：用于区分「旧文章的失败响应」与「当前文章的失败响应」 */
+  const currentIdRef = useRef(articleId)
+  const markUnavailable = useCallback((requestArticleId: number) => {
+    // 切换文章后，旧文章的请求迟到返回 404 时不应把新文章判为下架
+    if (requestArticleId !== currentIdRef.current) return
+    if (unavailableRef.current) return
+    unavailableRef.current = true
+    activeRef.current = false
+    setArticle(null)
+    message.warning('文章不存在或已下架，已停止阅读计时')
+  }, [message])
 
   // 加载文章
   useEffect(() => {
     if (!Number.isFinite(articleId)) return
+    currentIdRef.current = articleId
+    unavailableRef.current = false
+    activeRef.current = document.visibilityState === 'visible'
+    setArticle(null)
+    setLoading(true)
     ;(async () => {
       try {
         const r = await articleApi.detail(articleId)
@@ -56,7 +79,7 @@ export default function StudentArticle() {
   // 页面可见性：切后台暂停计时（PRD 5.5）
   useEffect(() => {
     const onVisibility = () => {
-      activeRef.current = document.visibilityState === 'visible'
+      activeRef.current = !unavailableRef.current && document.visibilityState === 'visible'
     }
     document.addEventListener('visibilitychange', onVisibility)
     activeRef.current = document.visibilityState === 'visible'
@@ -75,16 +98,17 @@ export default function StudentArticle() {
       } else if (r.points_gained) {
         message.success(`阅读 +${r.points_gained} 分`)
       }
-    } catch {
+    } catch (e) {
+      if (isArticleNotFound(e)) markUnavailable(articleId)
       // 网络异常时静默，等下一个心跳
     }
-  }, [articleId, message])
+  }, [articleId, markUnavailable, message])
 
   useEffect(() => {
-    if (!Number.isFinite(articleId)) return
+    if (!Number.isFinite(articleId) || !article) return
     const timer = setInterval(report, HEARTBEAT_MS)
     return () => clearInterval(timer)
-  }, [articleId, report])
+  }, [articleId, article, report])
 
   // 本地秒表，仅用于展示
   useEffect(() => {
@@ -107,7 +131,8 @@ export default function StudentArticle() {
         message.success(`恭喜读完本篇，获得 ${r.points_gained} 积分`)
       }
     } catch (e) {
-      message.error(e instanceof Error ? e.message : '操作失败')
+      if (isArticleNotFound(e)) markUnavailable(articleId)
+      else message.error(e instanceof Error ? e.message : '操作失败')
     }
   }
 
@@ -175,7 +200,8 @@ export default function StudentArticle() {
                 const r = await articleApi.exportPdf(articleId)
                 window.open(fileUrl(r.file_url), '_blank')
               } catch (e) {
-                message.error(e instanceof Error ? e.message : '导出失败')
+                if (isArticleNotFound(e)) markUnavailable(articleId)
+                else message.error(e instanceof Error ? e.message : '导出失败')
               }
             }}
           >

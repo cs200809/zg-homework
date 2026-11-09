@@ -7,6 +7,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 
 from app.db.repo import Repo
 from app.db.session import get_db
@@ -69,7 +70,7 @@ def _gen_bind_code() -> str:
 
 
 @router.post("/register")
-async def register(req: RegisterRequest, db: Session = Depends(get_db)):
+def register(req: RegisterRequest, db: Session = Depends(get_db)):
     """注册。学生/家长/老师（PRD 5.1、迭代 v2.1）。
 
     - 老师：老师邀请码，**一码一用**
@@ -90,7 +91,7 @@ async def register(req: RegisterRequest, db: Session = Depends(get_db)):
         if not req.teacher_invite_code:
             raise _bad_request("老师注册必须携带邀请码")
 
-        invite = repo.get_invite_by_code(req.teacher_invite_code.strip())
+        invite = repo.get_invite_for_update(code=req.teacher_invite_code.strip())
         if not invite:
             raise _bad_request("邀请码不存在")
 
@@ -104,7 +105,7 @@ async def register(req: RegisterRequest, db: Session = Depends(get_db)):
     elif req.role == ROLE_STUDENT:
         if not req.class_invite_code:
             raise _bad_request("学生注册必须携带班级邀请码")
-        klass = repo.get_class_by_invite_code(req.class_invite_code.strip().upper())
+        klass = repo.get_class_by_code_for_update(req.class_invite_code.strip().upper())
         if not klass:
             raise _bad_request("班级邀请码不存在")
 
@@ -112,20 +113,26 @@ async def register(req: RegisterRequest, db: Session = Depends(get_db)):
     elif req.role == ROLE_PARENT:
         if not req.bind_code:
             raise _bad_request("家长注册必须携带学生绑定码")
-        student = repo.get_user_by_bind_code(req.bind_code.strip())
+        student = repo.get_student_by_code_for_update(req.bind_code)
         if not student:
             raise _bad_request("学生绑定码不存在")
 
-    created = repo.add_user(
-        User(
-            username=req.username,
-            password_hash=hash_password(req.password),
-            role=req.role,
-            nickname=req.nickname or req.username,
-            class_id=klass.id if klass else None,
-            bind_code=gen_bind_code() if req.role == ROLE_STUDENT else None,
+    try:
+        created = repo.add_user(
+            User(
+                username=req.username,
+                password_hash=hash_password(req.password),
+                role=req.role,
+                nickname=req.nickname or req.username,
+                class_id=klass.id if klass else None,
+                bind_code=gen_bind_code() if req.role == ROLE_STUDENT else None,
+            )
         )
-    )
+    except IntegrityError as exc:
+        db.rollback()
+        if getattr(exc.orig, 'args', [None])[0] not in (1062, 2067, 1555) and 'UNIQUE constraint failed' not in str(exc.orig):
+            raise
+        raise _bad_request("用户名或绑定码冲突，请重试") from exc
 
     # 一码一用：标记老师邀请码已使用
     if invite is not None:

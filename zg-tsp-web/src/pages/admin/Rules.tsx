@@ -361,7 +361,7 @@ export default function AdminRules() {
             name="min_score"
             label="分数下限（含）"
             rules={[{ required: true, message: '请输入分数下限' }, { type: 'integer', message: '请输入整数' }]}
-            extra="下限不可重复；实际命中的是分数不超过它的最高启用档位"
+            extra="下限不可重复；实际命中的是下限不超过分数的最高启用档位"
           >
             <InputNumber min={0} max={100} style={{ width: '100%' }} />
           </Form.Item>

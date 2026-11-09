@@ -25,6 +25,7 @@ import { UploadOutlined } from '@ant-design/icons'
 import { useParams } from 'react-router-dom'
 
 import { homeworkApi } from '../../api/classes'
+import { fileUrl } from '../../api/client'
 import type { Homework } from '../../api/types'
 
 export default function StudentHomeworkDetail() {
@@ -181,7 +182,15 @@ export default function StudentHomeworkDetail() {
       ) : null}
 
       {submitted ? (
-        <Alert type="success" showIcon message="已提交，不可重复提交" />
+        <>
+          <Card size="small" title="我的作答" style={{ marginBottom: 16 }}>
+            <div style={{ whiteSpace: 'pre-wrap' }}>{rec.text_content || '无文字作答'}</div>
+            {rec.file_url && (
+              <a href={fileUrl(rec.file_url)} target="_blank" rel="noreferrer">查看附件</a>
+            )}
+          </Card>
+          <Alert type="success" showIcon message="已提交，不可重复提交" />
+        </>
       ) : (
         <>
           <label>我的作答</label>

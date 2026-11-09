@@ -5,6 +5,7 @@ import type {
   ClassInfo,
   ClassStudent,
   Homework,
+  HomeworkHistoryItem,
   HomeworkRecord,
   HomeworkRecordRow,
   PendingReviewRow,
@@ -70,6 +71,11 @@ export const homeworkApi = {
 
   today: () =>
     post<{ list: Homework[]; total: number; class_id: number | null }>('/homework/today'),
+
+  myList: (page = 1, size = 20) =>
+    post<PageResult<HomeworkHistoryItem>>(
+      '/homework/my-list', { page, size },
+    ),
 
   detail: (homeworkId: number) =>
     post<{ homework: Homework }>('/homework/detail', { homework_id: homeworkId }),

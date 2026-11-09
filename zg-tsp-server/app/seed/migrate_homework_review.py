@@ -3,11 +3,11 @@
 仓库**无 Alembic**，`Base.metadata.create_all()` 只建缺失的表、
 **不修改已有表的结构**，因此新增列必须显式 ALTER。
 
-本脚本**幂等**：已存在的列/表/索引/种子直接跳过，可重复执行。
+已存在的非空档位表保持原样；空表状态无法区分中断与管理员有意清空，须人工处理。
 
 **注意：DDL 不是原子的。** MySQL 的 DDL 会隐式提交，`engine.begin()` 的事务
-边界保护不了 DDL —— 中途失败会留下「一半」的表结构（例如列已加但种子没写）。
-本脚本靠幂等性来兜底：**中断后直接重跑一次**即可补齐剩余部分。
+边界保护不了 DDL。首次建表后种子提交前中断，重跑会检测到空表并停止，
+不会猜测或覆盖管理员配置；请参考报错及 PRD 人工恢复。
 
 用法：
     python -m app.seed.migrate_homework_review
@@ -29,24 +29,21 @@ NEW_COLUMNS = [
     ("review_comment", "TEXT NULL COMMENT '老师评语'"),
     ("reviewed_at", "DATETIME NULL COMMENT '批改时间'"),
     ("reviewed_by", "INTEGER NULL COMMENT '批改老师用户ID'"),
-    ("review_points", "INTEGER NOT NULL DEFAULT 0 COMMENT '实际已发放的批改积分（改分时按差额补发/回扣）'"),
-]
-
-# (约束名, 列名, 被引用表) —— 与 ORM `reviewed_by` 的 ForeignKey("users.id") 对齐
-NEW_FOREIGN_KEYS = [
-    ("fk_homework_records_reviewed_by", "reviewed_by", "users"),
+    ("review_points", "INTEGER NOT NULL DEFAULT 0 COMMENT '批改积分实际净变动累计'"),
+    ("review_target_points", "INTEGER NULL COMMENT '上次批改目标档位积分；未批改为NULL'"),
 ]
 
 # (索引名, 列列表) —— 与 ORM `HomeworkRecord.__table_args__` 保持一致
 NEW_INDEXES = [
     ("ix_homework_records_pending", "homework_id, reviewed_at"),
+    ("ix_homework_records_reviewed_by", "reviewed_by"),
 ]
 
 # (min_score, points) 种子档位 —— 与 initial_data.DEFAULT_REVIEW_RULES 同源
 SEED_RULES = DEFAULT_REVIEW_RULES
 
 CREATE_TABLE_SQL = """
-CREATE TABLE IF NOT EXISTS homework_review_rules (
+CREATE TABLE homework_review_rules (
     id          INTEGER      NOT NULL AUTO_INCREMENT COMMENT '档位ID',
     min_score   INTEGER      NOT NULL COMMENT '档位分数下限（含）',
     points      INTEGER      NOT NULL DEFAULT 0 COMMENT '该档位发放的积分',
@@ -55,7 +52,7 @@ CREATE TABLE IF NOT EXISTS homework_review_rules (
     updated_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '最后修改时间',
     PRIMARY KEY (id),
     UNIQUE KEY uq_homework_review_rules_min_score (min_score),
-    CONSTRAINT fk_homework_review_rules_updated_by FOREIGN KEY (updated_by) REFERENCES users (id)
+    KEY ix_homework_review_rules_updated_by (updated_by)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='作业批改档位表：分数下限 → 积分映射，admin 可改'
 """
 
@@ -91,22 +88,27 @@ def _existing_indexes(conn) -> set[str]:
     return {row[0] for row in rows}
 
 
-def _has_foreign_key(conn, table: str, column: str, ref_table: str) -> bool:
-    """该表该列上是否已有指向 ref_table 的外键（按列判定，不依赖约束名）。"""
-    row = conn.execute(
-        text(
-            "SELECT COUNT(*) FROM information_schema.KEY_COLUMN_USAGE "
-            "WHERE CONSTRAINT_SCHEMA = DATABASE() AND TABLE_NAME = :t "
-            "AND COLUMN_NAME = :c AND REFERENCED_TABLE_NAME = :rt"
-        ),
-        {"t": table, "c": column, "rt": ref_table},
-    ).scalar()
-    return bool(row)
-
-
 def _existing_min_scores(conn) -> set[int]:
     rows = conn.execute(text("SELECT min_score FROM homework_review_rules"))
     return {row[0] for row in rows}
+
+
+def _backfill_review_targets(conn, check_only: bool) -> int:
+    """按当前档位初始化旧记录；仅填 NULL，不覆盖已保存的目标。"""
+    count = conn.execute(text(
+        "SELECT COUNT(*) FROM homework_records "
+        "WHERE review_score IS NOT NULL AND review_target_points IS NULL"
+    )).scalar_one()
+    if count and not check_only:
+        conn.execute(text(
+            "UPDATE homework_records SET review_target_points = COALESCE("
+            "(SELECT points FROM homework_review_rules "
+            "WHERE enabled = 1 AND min_score <= homework_records.review_score "
+            "ORDER BY min_score DESC LIMIT 1), 0) "
+            "WHERE review_score IS NOT NULL AND review_target_points IS NULL"
+        ))
+    print(f"{'待初始化' if check_only else '已初始化'}批改目标：{count} 条")
+    return count
 
 
 def main(check_only: bool = False) -> None:
@@ -115,6 +117,16 @@ def main(check_only: bool = False) -> None:
         # 信息量太低，这里提前给出可操作的提示。
         if not _table_exists(conn, "homework_records"):
             raise RuntimeError("表 homework_records 不存在，请先建表")
+
+        # 必须在任何 DDL 或回填前检查，避免空表被误当作零积分规则。
+        table_exists = _table_exists(conn, "homework_review_rules")
+        if table_exists and not _existing_min_scores(conn):
+            raise RuntimeError(
+                "homework_review_rules 已存在但为空：可能是首次建表后中断，"
+                "也可能是管理员有意清空，无法自动判断。请停止迁移，人工核对"
+                "备份及管理员意图，恢复或明确配置所需档位后再重跑；"
+                "不要直接补默认档位或删除表。详见 PRD。"
+            )
 
         existing = _existing_columns(conn)
         added: list[str] = []
@@ -128,24 +140,6 @@ def main(check_only: bool = False) -> None:
                 continue
             conn.execute(text(f"ALTER TABLE homework_records ADD COLUMN {name} {ddl}"))
             added.append(name)
-
-        # 外键：ORM 里 reviewed_by 指向 users.id，create_all 不会给已有表补外键
-        # 按**列**判定外键是否已存在：init.sql 建出的外键是匿名的，
-        # 按约束名比对会漏判并加出重复外键。
-        for fk_name, fk_col, fk_ref in NEW_FOREIGN_KEYS:
-            if _has_foreign_key(conn, "homework_records", fk_col, fk_ref):
-                print(f"跳过（已存在）：外键 {fk_col} → {fk_ref}.id")
-                continue
-            if check_only:
-                print(f"待新增：外键 {fk_name} ({fk_col} → {fk_ref}.id)")
-                continue
-            conn.execute(
-                text(
-                    f"ALTER TABLE homework_records ADD CONSTRAINT {fk_name} "
-                    f"FOREIGN KEY ({fk_col}) REFERENCES {fk_ref} (id)"
-                )
-            )
-            print(f"已新增：外键 {fk_name} ({fk_col} → {fk_ref}.id)")
 
         # 索引：create_all 不会给已有表补索引，需显式 CREATE
         have_indexes = _existing_indexes(conn)
@@ -161,19 +155,19 @@ def main(check_only: bool = False) -> None:
             )
             print(f"已新增：索引 {index_name} ({index_cols})")
 
-        # 档位表（IF NOT EXISTS，幂等）
-        table_exists = _table_exists(conn, "homework_review_rules")
-        if check_only:
-            if table_exists:
-                print("跳过（已存在）：表 homework_review_rules")
-            else:
-                print("待建表：homework_review_rules")
+        # 不使用 IF NOT EXISTS：并发建表时必须失败，不能误种入别人的表。
+        if table_exists:
+            print("跳过（已存在）：表 homework_review_rules")
+        elif check_only:
+            print("待建表：homework_review_rules")
         else:
             conn.execute(text(CREATE_TABLE_SQL))
 
-        # 档位种子
+        # 仅首次建表时写默认档位；已有表可能被管理员有意清空或调整，
+        # 迁移必须保留现有配置，回填也应基于迁移前的规则。
         have = _existing_min_scores(conn) if table_exists else set()
-        for min_score, points in SEED_RULES:
+        seed_rules = [] if table_exists else SEED_RULES
+        for min_score, points in seed_rules:
             if min_score in have:
                 print(f"跳过（已存在）：档位 {min_score}")
                 continue
@@ -188,6 +182,18 @@ def main(check_only: bool = False) -> None:
                 {"m": min_score, "p": points},
             )
             print(f"已写入：档位 {min_score} → {points} 分")
+
+        # --check 时新列尚不存在，按已批改记录数报告待初始化数量。
+        if check_only and ("review_target_points" in added or "review_score" in added):
+            if "review_score" in existing:
+                count = conn.execute(text(
+                    "SELECT COUNT(*) FROM homework_records WHERE review_score IS NOT NULL"
+                )).scalar_one()
+                print(f"待初始化批改目标：{count} 条（使用迁移时的档位）")
+            else:
+                print("待初始化批改目标：0 条")
+        else:
+            _backfill_review_targets(conn, check_only)
 
     if added:
         verb = "待新增列" if check_only else "已新增列"

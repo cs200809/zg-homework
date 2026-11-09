@@ -13,3 +13,5 @@ __pycache__/
 # 真实数据（见 zg-tsp-server/tests/conftest.py 的约定），属于本地联调资产。
 # 本地文件保留，仅从 git 索引移除；新增测试文件请放到该目录下。
 /zg-tsp-server/tests/
+/.superpowers/
+/docs/

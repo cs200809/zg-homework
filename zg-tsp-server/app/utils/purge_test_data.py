@@ -1,468 +1,191 @@
-"""清除开发库中的测试数据（开发/运维用）。
+"""开发数据清理。请先备份，在维护窗口停止所有服务及后台写入。
 
-背景：pytest 直接跑在开发库 zg_tsp 上，测试数据会不断累积
-（历史遗留曾把库撑到近 7000 个用户），也让「哪些是真实数据」难以分辨。
-
-现在测试数据统一以 **test_ 前缀**标识（用户名为 test_xxx，
-班级邀请码以 T 开头、老师邀请码以 TEST 开头），因此清理有两种模式：
-
-**按前缀**（默认，快）：删掉所有 test_ 开头的用户及其关联数据。
-新产生的测试数据都能被清掉，不必维护清单。
-
-> 迭代 v2.1 起，注册接口要求用户名是**手机号**，因此通过 API 注册出来的
-> 测试账号无法再用 test_ 前缀标识（用户名必须是 11 位手机号）。
-> 这类账号统一把**昵称**设为 test_ 前缀，本脚本按
-> 「用户名 **或** 昵称带 test_ 前缀」判定为测试数据。
-
-**按清单**（--by-keep-list）：只保留下列种子数据，其余全删。
-用于清理历史遗留的旧命名测试数据（t{hex}_、ac_、dbg_ 等）。
-
-保留清单：
-- 5 个种子账号：admin / teacher01 / student01 / student02 / parent01
-- 种子班级「三年二班」（邀请码 CLS2024）与邀请码 TEACH2024
-- 家长绑定关系（parent01 ↔ student01）
-- 10 条积分规则、成语题库种子题
-
-用法：
-    python -m app.utils.purge_test_data --dry-run     # 只统计不删除
-    python -m app.utils.purge_test_data               # 交互确认后执行
-    python -m app.utils.purge_test_data --by-keep-list  # 按保留清单清理
-
-⚠️ 危险操作：不可撤销，请先备份数据库。
+实际执行必须显式传 --maintenance-confirmed，声明在计划和执行全过程停写；
+这仅为运维声明，脚本无法自动验证。--yes 不能代替该声明。
+保留数据引用待删除对象时停止，不自动修改保留数据。dry-run 不写入。
 """
-
 import argparse
 import sys
 
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
+from app.db.session import SessionLocal
 
-from app.db.session import SessionLocal, engine
+KEEP_USERNAMES = ('admin', 'teacher01', 'student01', 'student02', 'parent01')
+KEEP_CLASS_NAMES = ('三年二班',)
+KEEP_CLASS_INVITE_CODES = ('CLS2024',)
+KEEP_INVITE_CODES = ('TEACH2024',)
 
-# --- 保留清单 ---
-
-# 种子账号（联调与验收用，PRD 12 节）
-KEEP_USERNAMES = ("admin", "teacher01", "student01", "student02", "parent01")
-
-# 种子班级名与邀请码
-KEEP_CLASS_NAMES = ("三年二班",)
-KEEP_CLASS_INVITE_CODES = ("CLS2024",)
-KEEP_INVITE_CODES = ("TEACH2024",)
-
-# 家长绑定：parent01 ↔ student01
-KEEP_PARENT_BINDINGS = (("parent01", "student01"),)
-
-# 测试用户判定（迭代 v2.1 起，API 注册的用户名是手机号，
-# 无法用 test_ 前缀标识，改用「用户名 **或** 昵称带 test_ 前缀」判定）
-_TEST_USER_SQL = "(u.username LIKE 'test\\_%' OR u.nickname LIKE 'test\\_%')"
-_NOT_TEST_USER_SQL = (
-    "(u.username NOT LIKE 'test\\_%' AND (u.nickname IS NULL OR u.nickname NOT LIKE 'test\\_%'))"
-)
-
-# 需要先清空的「子表」（含 users 外键）。顺序按外键依赖自底向上。
-# 表名 -> 是否保留种子行（True 表示按业务键保留）
-CHILD_TABLES = (
-    # 直接引用 users 的表
-    "reading_records",
-    "game_records",
-    "checkins",
-    "point_logs",
-    "homework_records",
-    "parent_students",
-    "articles",
-    "admin_logs",
-    "idiom_questions",
-    "teacher_invite_codes",
-    "homework",
-    "users",
+# 关系清单须与模型同步，包括历史多态引用。
+RELATIONS = (
+    ('users', 'class_id', 'classes', None),
+    ('classes', 'teacher_id', 'users', None),
+    ('teacher_invite_codes', 'created_by', 'users', None),
+    ('teacher_invite_codes', 'used_by_user_id', 'users', None),
+    ('homework', 'class_id', 'classes', None),
+    ('homework', 'teacher_id', 'users', None),
+    ('homework_records', 'homework_id', 'homework', None),
+    ('homework_records', 'student_id', 'users', None),
+    ('homework_records', 'reviewed_by', 'users', None),
+    ('homework_review_rules', 'updated_by', 'users', None),
+    ('checkins', 'student_id', 'users', None),
+    ('articles', 'author_id', 'users', None),
+    ('reading_records', 'article_id', 'articles', None),
+    ('reading_records', 'student_id', 'users', None),
+    ('game_records', 'student_id', 'users', None),
+    ('point_logs', 'student_id', 'users', None),
+    ('point_logs', 'operator_id', 'users', None),
+    ('parent_students', 'parent_id', 'users', None),
+    ('parent_students', 'student_id', 'users', None),
+    ('point_rules', 'updated_by', 'users', None),
+    ('admin_logs', 'admin_id', 'users', None),
+    ('idiom_questions', 'created_by', 'users', None),
+    ('admin_logs', 'target_id', 'users', 'user'),
+    ('admin_logs', 'target_id', 'teacher_invite_codes', 'teacher_invite_code'),
+    ('admin_logs', 'target_id', 'articles', 'article'),
+    ('admin_logs', 'target_id', 'idiom_questions', 'idiom_question'),
 )
 
 
-def _kept_user_ids(db, by_keep_list: bool) -> list[int]:
-    """确定要保留的用户 id 集合。
-
-    by_keep_list=True  → 只保留种子账号（用于清理历史旧命名残留）
-    by_keep_list=False → 只删 test_ 前缀的账号，其余（种子 + 手工建的）全留
-    """
+def _selections(by_keep_list):
     if by_keep_list:
-        rows = db.execute(
-            text("SELECT id FROM users WHERE username IN :names").bindparams(
-                names=tuple(KEEP_USERNAMES)
-            )
-        ).all()
-        return [r[0] for r in rows]
-
-    rows = db.execute(text(f"SELECT id FROM users u WHERE {_NOT_TEST_USER_SQL}")).all()
-    return [r[0] for r in rows]
-
-
-def _kept_class_ids(db, by_keep_list: bool) -> list[int]:
-    """确定要保留的班级 id 集合。
-
-    by_keep_list=True 时按种子班级精确锁定 —— 不能只按班级名匹配，
-    测试里也建过同名班级（teacher_id 指向测试老师），保留它们会导致
-    删 users 时外键报错。
-
-    by_keep_list=False 时保留所有非测试班级（班主任不是 test_ 账号的班）。
-    """
-    if by_keep_list:
-        rows = db.execute(
-            text(
-                "SELECT id FROM classes "
-                "WHERE invite_code IN :codes OR (name IN :names AND teacher_id = 1)"
-            ).bindparams(
-                codes=tuple(KEEP_CLASS_INVITE_CODES),
-                names=tuple(KEEP_CLASS_NAMES),
-            )
-        ).all()
-        return [r[0] for r in rows]
-
-    rows = db.execute(
-        text(
-            "SELECT c.id FROM classes c "
-            "LEFT JOIN users u ON u.id = c.teacher_id "
-            f"WHERE u.id IS NULL OR {_NOT_TEST_USER_SQL}"
-        )
-    ).all()
-    return [r[0] for r in rows]
-
-
-def _kept_invite_ids(db, by_keep_list: bool, kept_users: list[int]) -> list[int]:
-    """确定要保留的老师邀请码 id 集合。"""
-    if by_keep_list:
-        rows = db.execute(
-            text("SELECT id FROM teacher_invite_codes WHERE code IN :codes").bindparams(
-                codes=tuple(KEEP_INVITE_CODES)
-            )
-        ).all()
-        return [r[0] for r in rows]
-
-    # 老师邀请码：以下任一情形即删除
-    #   - 创建者是测试账号（测试创建的码一律不留）
-    #   - 使用者是非保留用户（否则删 users 时外键报错）
-    # 不能只看 code 前缀 —— 服务端 /admin/invite/create 生成的码是随机 12 位，
-    # 没有固定前缀，只能靠关联的用户判定。
-    # 保留 = 创建者与使用者都在保留集合内（使用者可为空）。
-    # 反过来，只要有一端指向将被删除的用户，这个邀请码就必须一起删，
-    # 否则删 users 时外键约束会报错。
-    rows = db.execute(
-        text(
-            "SELECT i.id FROM teacher_invite_codes i "
-            "LEFT JOIN users cu ON cu.id = i.created_by "
-            "LEFT JOIN users uu ON uu.id = i.used_by_user_id "
-            "WHERE cu.id IN :ids "
-            "  AND (uu.id IS NULL OR uu.id IN :ids) "
-            "  AND i.code NOT LIKE 'TEST%'"
-        ),
-        {"ids": tuple(kept_users) or (0,)},
-    ).all()
-    return [r[0] for r in rows]
-
-
-def _plan(db, by_keep_list: bool) -> dict:
-    """统计各表将被删除的行数。"""
-    kept_users = _kept_user_ids(db, by_keep_list)
-    kept_classes = _kept_class_ids(db, by_keep_list)
-
-    plan: dict[str, int] = {}
-
-    for table in CHILD_TABLES:
-        if table == "users":
-            n = db.execute(
-                text(
-                    "SELECT COUNT(*) FROM users WHERE id NOT IN :ids"
-                ).bindparams(ids=tuple(kept_users) or (0,))
-            ).scalar_one()
-            plan[table] = n
-            continue
-
-        if table == "homework":
-            # 作业属于保留的班级则保留
-            n = db.execute(
-                text(
-                    "SELECT COUNT(*) FROM homework WHERE class_id NOT IN :ids"
-                ).bindparams(ids=tuple(kept_classes) or (0,))
-            ).scalar_one()
-            plan[table] = n
-            continue
-
-        if table == "teacher_invite_codes":
-            kept_invites = _kept_invite_ids(db, by_keep_list, kept_users)
-            n = db.execute(
-                text(
-                    "SELECT COUNT(*) FROM teacher_invite_codes WHERE id NOT IN :ids"
-                ).bindparams(ids=tuple(kept_invites) or (0,))
-            ).scalar_one()
-            plan[table] = n
-            continue
-
-        if table == "parent_students":
-            # 家长或学生有一方是测试账号即删除
-            n = db.execute(
-                text(
-                    """
-                    SELECT COUNT(*) FROM parent_students ps
-                    LEFT JOIN users pu ON pu.id = ps.parent_id
-                    LEFT JOIN users su ON su.id = ps.student_id
-                    WHERE pu.id IS NULL OR pu.id NOT IN :ids
-                       OR su.id IS NULL OR su.id NOT IN :ids
-                    """
-                ),
-                {"ids": tuple(kept_users) or (0,)},
-            ).scalar_one()
-            plan[table] = n
-            continue
-
-        if table == "idiom_questions":
-            # 成语题库：保留由**非测试账号**创建的题（种子题 + admin 手工导入）
-            n = db.execute(
-                text(
-                    f"""
-                    SELECT COUNT(*) FROM idiom_questions iq
-                    LEFT JOIN users u ON u.id = iq.created_by
-                    WHERE u.id IS NULL OR {_TEST_USER_SQL}
-                    """
-                )
-            ).scalar_one()
-            plan[table] = n
-            continue
-
-        if table == "admin_logs":
-            # 操作者是测试账号的审计日志即删除
-            n = db.execute(
-                text(
-                    """
-                    SELECT COUNT(*) FROM admin_logs al
-                    LEFT JOIN users u ON u.id = al.admin_id
-                    WHERE u.id IS NULL OR u.id NOT IN :ids
-                    """
-                ),
-                {"ids": tuple(kept_users) or (0,)},
-            ).scalar_one()
-            plan[table] = n
-            continue
-
-        if table == "homework_records":
-            # 与 _purge 保持同一条件：学生非保留，或所属作业的班级非保留
-            n = db.execute(
-                text(
-                    """
-                    SELECT COUNT(*) FROM homework_records hr
-                    LEFT JOIN homework hw ON hw.id = hr.homework_id
-                    LEFT JOIN users u ON u.id = hr.student_id
-                    WHERE u.id IS NULL OR u.id NOT IN :ids
-                       OR hw.id IS NULL OR hw.class_id NOT IN :cids
-                    """
-                ),
-                {"ids": tuple(kept_users) or (0,), "cids": tuple(kept_classes) or (0,)},
-            ).scalar_one()
-            plan[table] = n
-            continue
-
-        # 其余表：只要引用了非保留用户就删
-        n = db.execute(
-            text(
-                f"SELECT COUNT(*) FROM {table} t "
-                f"WHERE EXISTS (SELECT 1 FROM users u WHERE u.id = t.{_user_col(table)} "
-                "AND u.id NOT IN :ids)"
-            ).bindparams(ids=tuple(kept_users) or (0,))
-        ).scalar_one()
-        plan[table] = n
-
-    # reading_records 通过 articles 间接引用用户，需要单独按文章清
-    plan["reading_records"] = db.execute(
-        text(
-            """
-            SELECT COUNT(*) FROM reading_records rr
-            LEFT JOIN articles a ON a.id = rr.article_id
-            WHERE a.id IS NULL
-               OR a.author_id NOT IN :ids
-            """
-        ).bindparams(ids=tuple(kept_users) or (0,))
-    ).scalar_one()
-
-    return plan
-
-
-def _user_col(table: str) -> str:
+        users = 'SELECT id FROM users WHERE username NOT IN :names'
+        classes = ('SELECT id FROM classes WHERE invite_code NOT IN :class_codes '
+                   'AND NOT (name IN :class_names AND teacher_id = 1)')
+        invites = 'SELECT id FROM teacher_invite_codes WHERE code NOT IN :invite_codes'
+    else:
+        users = ("SELECT id FROM users WHERE username LIKE 'test\\_%' "
+                 "OR nickname LIKE 'test\\_%'")
+        classes = f'SELECT id FROM classes WHERE teacher_id IN ({users})'
+        invites = (f'SELECT id FROM teacher_invite_codes WHERE code LIKE :test_code '
+                   f'OR created_by IN ({users})')
+    homework = f'SELECT id FROM homework WHERE class_id IN ({classes})'
+    articles = f'SELECT id FROM articles WHERE author_id IN ({users})'
     return {
-        "reading_records": "student_id",
-        "game_records": "student_id",
-        "checkins": "student_id",
-        "point_logs": "student_id",
-        "homework_records": "student_id",
-        "parent_students": "parent_id",
-        "articles": "author_id",
-        "admin_logs": "admin_id",
-        "idiom_questions": "created_by",
-        "teacher_invite_codes": "created_by",
-        "homework": "teacher_id",
-    }[table]
+        'users': users, 'classes': classes, 'teacher_invite_codes': invites,
+        'homework': homework, 'articles': articles,
+        'reading_records': f'SELECT id FROM reading_records WHERE student_id IN ({users}) OR article_id IN ({articles})',
+        'homework_records': f'SELECT id FROM homework_records WHERE student_id IN ({users}) OR homework_id IN ({homework})',
+        'parent_students': f'SELECT id FROM parent_students WHERE parent_id IN ({users}) OR student_id IN ({users})',
+        'game_records': f'SELECT id FROM game_records WHERE student_id IN ({users})',
+        'checkins': f'SELECT id FROM checkins WHERE student_id IN ({users})',
+        'point_logs': f'SELECT id FROM point_logs WHERE student_id IN ({users})',
+        'admin_logs': f'SELECT id FROM admin_logs WHERE admin_id IN ({users})',
+        'idiom_questions': f'SELECT id FROM idiom_questions WHERE created_by IN ({users})',
+    }
 
 
-def _purge(db, by_keep_list: bool) -> dict:
-    """执行清理，返回各表实际删除行数。"""
-    kept_users = _kept_user_ids(db, by_keep_list)
-    kept_classes = _kept_class_ids(db, by_keep_list)
-    kept_invites = _kept_invite_ids(db, by_keep_list, kept_users)
-    deleted: dict[str, int] = {}
+def _statement(sql, params):
+    stmt = text(sql)
+    for key, value in params.items():
+        if isinstance(value, tuple) and f':{key}' in sql:
+            stmt = stmt.bindparams(bindparam(key, expanding=True))
+    return stmt
 
-    def run(sql: str, **params) -> int:
-        result = db.execute(text(sql), params)
-        return result.rowcount
 
-    # 先删间接依赖：reading_records -> articles
-    deleted["reading_records"] = run(
-        """
-        DELETE rr FROM reading_records rr
-        LEFT JOIN articles a ON a.id = rr.article_id
-        WHERE a.id IS NULL OR a.author_id NOT IN :ids
-        """,
-        ids=tuple(kept_users) or (0,),
-    )
+def _plan(db, by_keep_list):
+    params = {'names': KEEP_USERNAMES, 'class_codes': KEEP_CLASS_INVITE_CODES,
+              'class_names': KEEP_CLASS_NAMES, 'invite_codes': KEEP_INVITE_CODES,
+              'test_code': 'TEST%'}
+    return {table: {row[0] for row in db.execute(_statement(sql, params), params)}
+            for table, sql in _selections(by_keep_list).items()}
 
-    for table in (
-        "game_records",
-        "checkins",
-        "point_logs",
-        "articles",
-    ):
-        deleted[table] = run(
-            f"DELETE FROM {table} WHERE {_user_col(table)} NOT IN :ids",
-            ids=tuple(kept_users) or (0,),
-        )
 
-    # 作业提交记录：既按学生过滤，也按所属作业的班级过滤 ——
-    # 后面要删非保留班级的作业，其提交记录必须先删，否则外键报错。
-    deleted["homework_records"] = run(
-        """
-        DELETE hr FROM homework_records hr
-        LEFT JOIN homework hw ON hw.id = hr.homework_id
-        LEFT JOIN users u ON u.id = hr.student_id
-        WHERE u.id IS NULL OR u.id NOT IN :ids
-           OR hw.id IS NULL OR hw.class_id NOT IN :cids
-        """,
-        ids=tuple(kept_users) or (0,),
-        cids=tuple(kept_classes) or (0,),
-    )
+def _conflicts(db, selected):
+    conflicts = []
+    known = {'user', 'teacher_invite_code', 'article', 'idiom_question',
+             'point_rule', 'homework_review_rule'}
+    for source, field, target, kind in RELATIONS:
+        ids = selected.get(target, set())
+        if not ids:
+            continue
+        sql = f'SELECT id, {field}' + (', target_type' if kind else '') + f' FROM {source} WHERE {field} IN :ids'
+        params = {'ids': tuple(ids)}
+        for row in db.execute(_statement(sql, params), params):
+            if row[0] in selected.get(source, set()):
+                continue
+            if kind and row[2] in known and row[2] != kind:
+                continue
+            conflicts.append(f'{source}.{field} -> {target}')
+    # 保留学生的历史记录不能为清理其作业或文章而被级联删除。
+    for table in ('reading_records', 'homework_records'):
+        ids = selected[table]
+        if ids:
+            sql = f'SELECT id, student_id FROM {table} WHERE id IN :ids'
+            params = {'ids': tuple(ids)}
+            if any(row[1] not in selected['users'] for row in db.execute(_statement(sql, params), params)):
+                conflicts.append(f'{table}.student_id -> 保留用户的历史记录')
+    ids = selected['parent_students']
+    if ids:
+        sql = 'SELECT parent_id, student_id FROM parent_students WHERE id IN :ids'
+        params = {'ids': tuple(ids)}
+        if any(parent not in selected['users'] or student not in selected['users']
+               for parent, student in db.execute(_statement(sql, params), params)):
+            conflicts.append('parent_students -> 保留用户的绑定关系')
+    return sorted(set(conflicts))
 
-    # parent_students：家长或学生有一方是测试账号即删除
-    deleted["parent_students"] = run(
-        """
-        DELETE ps FROM parent_students ps
-        LEFT JOIN users pu ON pu.id = ps.parent_id
-        LEFT JOIN users su ON su.id = ps.student_id
-        WHERE pu.id IS NULL OR pu.id NOT IN :ids
-           OR su.id IS NULL OR su.id NOT IN :ids
-        """,
-        ids=tuple(kept_users) or (0,),
-    )
 
-    # 审计日志：操作者是测试账号的即删除
-    deleted["admin_logs"] = run(
-        """
-        DELETE al FROM admin_logs al
-        LEFT JOIN users u ON u.id = al.admin_id
-        WHERE u.id IS NULL OR u.id NOT IN :ids
-        """,
-        ids=tuple(kept_users) or (0,),
-    )
+DELETE_ORDER = ('reading_records', 'homework_records', 'parent_students', 'game_records',
+                'checkins', 'point_logs', 'admin_logs', 'idiom_questions',
+                'teacher_invite_codes', 'articles', 'homework', 'classes', 'users')
 
-    # 成语题库：删掉由测试账号创建的题。
-    # MySQL 不允许 DELETE 的子查询引用同一张表，改用 LEFT JOIN 判存在性。
-    deleted["idiom_questions"] = run(
-        f"""
-        DELETE iq FROM idiom_questions iq
-        LEFT JOIN users u ON u.id = iq.created_by
-        WHERE u.id IS NULL OR {_TEST_USER_SQL}
-        """
-    )
 
-    # 邀请码：只删保留清单之外的
-    deleted["teacher_invite_codes"] = run(
-        "DELETE FROM teacher_invite_codes WHERE id NOT IN :ids",
-        ids=tuple(kept_invites) or (0,),
-    )
-
-    # 作业：保留班级下的作业
-    deleted["homework"] = run(
-        "DELETE FROM homework WHERE class_id NOT IN :ids",
-        ids=tuple(kept_classes) or (0,),
-    )
-
-    # 班级：保留种子班级（先解绑学生的 class_id）
-    deleted["users_class"] = run(
-        "UPDATE users SET class_id = NULL WHERE class_id NOT IN :ids",
-        ids=tuple(kept_classes) or (0,),
-    )
-    deleted["classes"] = run(
-        "DELETE FROM classes WHERE id NOT IN :ids",
-        ids=tuple(kept_classes) or (0,),
-    )
-
-    # 积分规则的 updated_by 指向 users，删用户前先把指向非保留用户的置空，
-    # 否则外键约束会阻止删除。指向 admin 的保留（审计语义更准确）。
-    run(
-        "UPDATE point_rules SET updated_by = NULL "
-        "WHERE updated_by IS NOT NULL AND updated_by NOT IN :ids",
-        ids=tuple(kept_users) or (0,),
-    )
-
-    # 用户：删非保留账号
-    deleted["users"] = run(
-        "DELETE FROM users WHERE id NOT IN :ids",
-        ids=tuple(kept_users) or (0,),
-    )
-
+def _purge(db, selected):
+    deleted = {}
+    for table in DELETE_ORDER:
+        ids = selected[table]
+        if not ids:
+            deleted[table] = 0
+            continue
+        sql = f'DELETE FROM {table} WHERE id IN :ids'
+        params = {'ids': tuple(ids)}
+        result = db.execute(_statement(sql, params), params)
+        if result.rowcount != len(ids):
+            raise RuntimeError(f'{table} 删除数量与计划不一致，事务回滚')
+        deleted[table] = result.rowcount
     db.commit()
     return deleted
 
 
-def _main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        prog="python -m app.utils.purge_test_data",
-        description="清除开发库中的测试数据（保留种子数据）",
-    )
-    parser.add_argument("--yes", action="store_true", help="跳过确认")
-    parser.add_argument("--dry-run", action="store_true", help="只统计不删除")
-    parser.add_argument(
-        "--by-keep-list",
-        action="store_true",
-        help="按保留清单清理（只留种子数据）；"
-        "默认只删 test_ 前缀的测试数据",
-    )
+def _main(argv=None):
+    parser = argparse.ArgumentParser(description='清理测试数据；运维须保证维护窗口停写')
+    parser.add_argument('--yes', action='store_true', help='跳过删除确认，不代替停写声明')
+    parser.add_argument('--dry-run', action='store_true', help='只读计划与冲突检查')
+    parser.add_argument('--by-keep-list', action='store_true', help='按种子保留清单清理')
+    parser.add_argument('--maintenance-confirmed', action='store_true',
+                        help='声明所有服务及后台写入已停止；无法自动验证')
     args = parser.parse_args(argv)
-
+    if not args.dry_run and not args.maintenance_confirmed:
+        print('拒绝执行：必须先停写并指定 --maintenance-confirmed；无法自动验证。', file=sys.stderr)
+        return 2
     db = SessionLocal()
     try:
-        plan = _plan(db, args.by_keep_list)
-        print("计划清理：")
-        total = 0
-        for table, n in plan.items():
-            print(f"  {table:24} {n:6} 行")
-            total += n
-        print(f"  {'合计':24} {total:6} 行")
-
+        selected = _plan(db, args.by_keep_list)
+        conflicts = _conflicts(db, selected)
+        print('计划清理：')
+        for table, ids in selected.items():
+            print(f'  {table:24} {len(ids):6} 行')
+        if conflicts:
+            print('保留对象引用冲突，停止：')
+            for conflict in conflicts:
+                print(f'  {conflict}')
+            return 2
         if args.dry_run:
-            print("\n--dry-run，未做任何改动。")
+            print('--dry-run，未做任何改动。')
             return 0
-
-        if not args.yes:
-            print("\n⚠️  此操作不可撤销。建议先备份数据库。")
-            answer = input("确认删除？(输入 yes 继续) ").strip().lower()
-            if answer != "yes":
-                print("已取消。")
-                return 1
-
-        deleted = _purge(db, args.by_keep_list)
-        print("\n实际删除：")
-        for table, n in deleted.items():
-            print(f"  {table:24} {n:6} 行")
+        if not args.yes and input('确认已备份且保持停写，输入 yes 删除：').strip() != 'yes':
+            print('已取消。')
+            return 1
+        deleted = _purge(db, selected)
+        print('实际删除：')
+        for table, count in deleted.items():
+            print(f'  {table:24} {count:6} 行')
+        return 0
+    except Exception:
+        db.rollback()
+        raise
     finally:
         db.close()
 
-    print("\n✓ 清理完成。")
-    return 0
 
-
-if __name__ == "__main__":
+if __name__ == '__main__':
     raise SystemExit(_main())

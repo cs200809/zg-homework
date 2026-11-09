@@ -62,6 +62,10 @@ export interface Homework {
   my_record?: HomeworkRecord | null
 }
 
+export interface HomeworkHistoryItem extends Homework {
+  my_record: HomeworkRecord & { submit_time: string; reviewed_at: string | null }
+}
+
 export interface HomeworkRecord {
   id: number
   homework_id: number

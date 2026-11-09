@@ -12,6 +12,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 
 from app.db.repo import Repo
 from app.db.session import get_db
@@ -87,7 +88,7 @@ class UnbindRequest(BaseModel):
 
 
 @router.post("/bind")
-async def bind_child(
+def bind_child(
     req: BindRequest,
     parent: User = Depends(get_verified_user),
     db: Session = Depends(get_db),
@@ -96,15 +97,21 @@ async def bind_child(
     _require_parent(parent)
 
     repo = Repo(db)
-    child = repo.get_user_by_bind_code(req.bind_code)
+    child = repo.get_student_by_code_for_update(req.bind_code)
     if not child:
         raise _not_found("绑定码不存在或已失效")
 
-    if repo.get_parent_student(parent.id, child.id):
+    if repo.get_parent_student_for_update(parent.id, child.id):
         raise _bad_request("已绑定该学生")
 
-    repo.add_parent_student(ParentStudent(parent_id=parent.id, student_id=child.id))
-    db.commit()
+    try:
+        repo.add_parent_student(ParentStudent(parent_id=parent.id, student_id=child.id))
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        if getattr(exc.orig, 'args', [None])[0] != 1062 and 'UNIQUE constraint failed' not in str(exc.orig):
+            raise
+        raise _bad_request("已绑定该学生") from exc
 
     return ok({
         "student_id": child.id,
@@ -180,7 +187,7 @@ async def child_points(
 
 
 @router.post("/consume")
-async def consume_points(
+def consume_points(
     req: ConsumeRequest,
     parent: User = Depends(get_verified_user),
     db: Session = Depends(get_db),
@@ -193,7 +200,11 @@ async def consume_points(
     _require_parent(parent)
 
     repo = Repo(db)
-    child = _own_child(repo, parent, req.student_id)
+    child = repo.get_user_by_id_for_update(req.student_id)
+    if not child:
+        raise _not_found("学生不存在")
+    if not repo.get_parent_student_for_update(parent.id, req.student_id):
+        raise _forbidden("只能操作自己绑定的孩子")
 
     try:
         remaining = point_service.consume(
@@ -224,7 +235,7 @@ async def consume_items(parent: User = Depends(get_verified_user)):
 
 
 @router.post("/unbind")
-async def unbind_child(
+def unbind_child(
     req: UnbindRequest,
     parent: User = Depends(get_verified_user),
     db: Session = Depends(get_db),
@@ -233,7 +244,10 @@ async def unbind_child(
     _require_parent(parent)
 
     repo = Repo(db)
-    rel = repo.get_parent_student(parent.id, req.student_id)
+    child = repo.get_user_by_id_for_update(req.student_id)
+    if not child:
+        raise _bad_request("未绑定该学生")
+    rel = repo.get_parent_student_for_update(parent.id, req.student_id)
     if not rel:
         raise _bad_request("未绑定该学生")
 

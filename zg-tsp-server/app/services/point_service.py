@@ -40,26 +40,27 @@ def count_awards_on(db: Session, student_id: int, type_: str, day: date) -> int:
     例如 checkin_daily = {points: 5, daily_limit: 1} 表示
     「每天签到 1 次，每次给 5 分」，而非「每天最多得 1 分」。
     """
-    return db.scalar(
-        select(func.count(PointLog.id)).where(
+    # RR 下普通聚合读可能沿用加锁之前的旧快照；锁定读取取得当前版本。
+    # 调用者必须先持有该学生的 users 排他锁，避免同学生并发插入。
+    return len(list(db.scalars(
+        select(PointLog.id).where(
             PointLog.student_id == student_id,
             PointLog.type == type_,
             PointLog.log_date == day,
-        )
-    ) or 0
+        ).with_for_update()
+    )))
 
 
 def sum_points_by_type_on(db: Session, student_id: int, type_: str, day: date) -> int:
     """某学生某类型在某天已获得的积分合计（如游戏当日合计，用于封顶）。"""
-    total = db.scalar(
-        select(func.coalesce(func.sum(PointLog.points), 0)).where(
+    return sum(db.scalars(
+        select(PointLog.points).where(
             PointLog.student_id == student_id,
             PointLog.type == type_,
             PointLog.log_date == day,
             PointLog.points > 0,
-        )
-    )
-    return total or 0
+        ).with_for_update()
+    ))
 
 
 def award(
@@ -86,7 +87,7 @@ def award(
     if rule is None or not rule.enabled:
         return 0
 
-    user = Repo(db).get_user_by_id(student_id)
+    user = Repo(db).get_user_by_id_for_update(student_id)
     if user is None or user.role != ROLE_STUDENT:
         raise PointError("仅可为学生账号发放积分")
 
@@ -135,7 +136,7 @@ def award_game(
     if rule is None or not rule.enabled or rule.points <= 0:
         return 0
 
-    user = Repo(db).get_user_by_id(student_id)
+    user = Repo(db).get_user_by_id_for_update(student_id)
     if user is None or user.role != ROLE_STUDENT:
         raise PointError("仅可为学生账号发放积分")
 
@@ -181,7 +182,7 @@ def consume(
     if points <= 0:
         raise PointError("扣分数值必须大于 0")
 
-    user = Repo(db).get_user_by_id(student_id)
+    user = Repo(db).get_user_by_id_for_update(student_id)
     if user is None or user.role != ROLE_STUDENT:
         raise PointError("仅可为学生账号扣减积分")
 

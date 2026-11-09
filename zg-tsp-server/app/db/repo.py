@@ -185,6 +185,12 @@ class Repo:
     def get_class_by_invite_code(self, invite_code: str) -> Class | None:
         return self.db.scalar(select(Class).where(Class.invite_code == invite_code))
 
+    def get_class_for_update(self, class_id: int) -> Class | None:
+        return self.db.scalar(select(Class).where(Class.id == class_id).with_for_update().execution_options(populate_existing=True))
+
+    def get_class_by_code_for_update(self, code: str) -> Class | None:
+        return self.db.scalar(select(Class).where(Class.invite_code == code).with_for_update().execution_options(populate_existing=True))
+
     def list_classes_by_teacher(self, teacher_id: int) -> list[Class]:
         return list(self.db.scalars(select(Class).where(Class.teacher_id == teacher_id).order_by(Class.id)))
 
@@ -205,6 +211,12 @@ class Repo:
 
     def get_homework_by_id(self, homework_id: int) -> Homework | None:
         return self.db.get(Homework, homework_id)
+
+    def get_homework_for_update(self, homework_id: int) -> Homework | None:
+        return self.db.scalar(
+            select(Homework).where(Homework.id == homework_id)
+            .with_for_update().execution_options(populate_existing=True)
+        )
 
     def list_homework_paged(
         self,
@@ -236,6 +248,26 @@ class Repo:
             )
         )
 
+    def list_my_submitted_homework(
+        self, student_id: int, class_id: int, page: int, size: int
+    ) -> tuple[list, int]:
+        base = (
+            select(Homework, HomeworkRecord)
+            .join(HomeworkRecord, HomeworkRecord.homework_id == Homework.id)
+            .where(
+                Homework.class_id == class_id,
+                HomeworkRecord.student_id == student_id,
+                HomeworkRecord.submit_time.is_not(None),
+            )
+        )
+        total = self.db.scalar(select(func.count()).select_from(base.subquery())) or 0
+        rows = self.db.execute(
+            base.order_by(HomeworkRecord.submit_time.desc(), HomeworkRecord.id.desc())
+            .offset((page - 1) * size)
+            .limit(size)
+        ).all()
+        return rows, total
+
     def add_homework_record(self, record: HomeworkRecord) -> HomeworkRecord:
         self.db.add(record)
         self.db.flush()
@@ -265,8 +297,15 @@ class Repo:
                 HomeworkRecord.homework_id == homework_id,
                 HomeworkRecord.student_id == student_id,
             )
-            .with_for_update()
+            .with_for_update().execution_options(populate_existing=True)
         )
+
+    def list_homework_records_for_update(self, homework_id: int) -> list[HomeworkRecord]:
+        return list(self.db.scalars(
+            select(HomeworkRecord).where(HomeworkRecord.homework_id == homework_id)
+            .order_by(HomeworkRecord.id).with_for_update()
+            .execution_options(populate_existing=True)
+        ))
 
     def list_homework_records(self, homework_id: int) -> list[HomeworkRecord]:
         return list(
@@ -386,21 +425,19 @@ class Repo:
         self.db.flush()
         return checkin
 
-    def get_checkin(self, student_id: int, day: date) -> Checkin | None:
-        return self.db.scalar(
-            select(Checkin).where(Checkin.student_id == student_id, Checkin.checkin_date == day)
-        )
+    def get_checkin(self, student_id: int, day: date, *, for_update: bool = False) -> Checkin | None:
+        stmt = select(Checkin).where(Checkin.student_id == student_id, Checkin.checkin_date == day)
+        if for_update:
+            stmt = stmt.with_for_update().execution_options(populate_existing=True)
+        return self.db.scalar(stmt)
 
-    def list_checkins_desc(self, student_id: int, limit: int = 60) -> list[Checkin]:
+    def list_checkins_desc(self, student_id: int, limit: int = 60, *, for_update: bool = False) -> list[Checkin]:
         """最近的签到记录（倒序），用于计算连续签到天数。"""
-        return list(
-            self.db.scalars(
-                select(Checkin)
-                .where(Checkin.student_id == student_id)
-                .order_by(Checkin.checkin_date.desc())
-                .limit(limit)
-            )
-        )
+        stmt = (select(Checkin).where(Checkin.student_id == student_id)
+                .order_by(Checkin.checkin_date.desc()).limit(limit))
+        if for_update:
+            stmt = stmt.with_for_update().execution_options(populate_existing=True)
+        return list(self.db.scalars(stmt))
 
     # ---------------- 排行榜（PRD 5.4） ----------------
 
@@ -499,6 +536,11 @@ class Repo:
             )
         )
 
+    def get_student_by_code_for_update(self, code: str) -> User | None:
+        return self.db.scalar(select(User).where(
+            User.bind_code == code.strip().upper(), User.role == "student"
+        ).with_for_update().execution_options(populate_existing=True))
+
     def add_parent_student(self, rel: ParentStudent) -> ParentStudent:
         self.db.add(rel)
         self.db.flush()
@@ -511,6 +553,11 @@ class Repo:
                 ParentStudent.student_id == student_id,
             )
         )
+
+    def get_parent_student_for_update(self, parent_id: int, student_id: int) -> ParentStudent | None:
+        return self.db.scalar(select(ParentStudent).where(
+            ParentStudent.parent_id == parent_id, ParentStudent.student_id == student_id
+        ).with_for_update().execution_options(populate_existing=True))
 
     def list_children(self, parent_id: int) -> list[User]:
         """某家长绑定的孩子列表（PRD 5.7：一个家长可绑多个）。"""
@@ -530,8 +577,11 @@ class Repo:
         self.db.flush()
         return art
 
-    def get_article_by_id(self, article_id: int) -> Article | None:
-        return self.db.get(Article, article_id)
+    def get_article_by_id(self, article_id: int, *, for_update: bool = False) -> Article | None:
+        stmt = select(Article).where(Article.id == article_id, Article.deleted_at.is_(None))
+        if for_update:
+            stmt = stmt.with_for_update().execution_options(populate_existing=True)
+        return self.db.scalar(stmt)
 
     def list_articles_paged(
         self,
@@ -545,7 +595,7 @@ class Repo:
         stmt = select(Article)
         count_stmt = select(func.count()).select_from(Article)
 
-        conditions = []
+        conditions = [Article.deleted_at.is_(None)]
         if status:
             conditions.append(Article.status == status)
         if author_id:
@@ -567,16 +617,17 @@ class Repo:
         return rec
 
     def get_reading_record(
-        self, article_id: int, student_id: int, day: date
+        self, article_id: int, student_id: int, day: date, *, for_update: bool = False
     ) -> ReadingRecord | None:
         """当天的阅读记录（PRD 4.1：UNIQUE(article_id, student_id, read_date)）。"""
-        return self.db.scalar(
-            select(ReadingRecord).where(
-                ReadingRecord.article_id == article_id,
-                ReadingRecord.student_id == student_id,
-                ReadingRecord.read_date == day,
-            )
+        stmt = select(ReadingRecord).where(
+            ReadingRecord.article_id == article_id,
+            ReadingRecord.student_id == student_id,
+            ReadingRecord.read_date == day,
         )
+        if for_update:
+            stmt = stmt.with_for_update().execution_options(populate_existing=True)
+        return self.db.scalar(stmt)
 
     def list_reading_records(self, article_id: int) -> list[ReadingRecord]:
         return list(
@@ -626,6 +677,10 @@ class Repo:
 
     def get_invite_by_code(self, code: str) -> TeacherInviteCode | None:
         return self.db.scalar(select(TeacherInviteCode).where(TeacherInviteCode.code == code))
+
+    def get_invite_for_update(self, *, code: str | None = None, invite_id: int | None = None) -> TeacherInviteCode | None:
+        condition = TeacherInviteCode.code == code if code is not None else TeacherInviteCode.id == invite_id
+        return self.db.scalar(select(TeacherInviteCode).where(condition).with_for_update().execution_options(populate_existing=True))
 
     def list_invite_codes(self) -> list[TeacherInviteCode]:
         return list(self.db.scalars(select(TeacherInviteCode).order_by(TeacherInviteCode.id)))
