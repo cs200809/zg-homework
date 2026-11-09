@@ -169,10 +169,17 @@ export default function TeacherHomeworkRecords() {
                 ),
             },
             {
-              title: '积分',
+              title: '提交积分',
               dataIndex: 'points',
-              width: 80,
+              width: 100,
               render: (v: number) => <Tag color="gold">{v}</Tag>,
+            },
+            {
+              title: '批改积分',
+              dataIndex: 'review_points',
+              width: 100,
+              render: (v: number | null, r: HomeworkRecordRow) =>
+                r.review_score == null ? '-' : <Tag color="gold">{v ?? 0}</Tag>,
             },
           ]}
         />
