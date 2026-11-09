@@ -9,6 +9,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 
 from app.db.repo import Repo
 from app.db.session import get_db
@@ -116,7 +117,7 @@ async def create_class(
 
 
 @router.post("/join")
-async def join_class(
+def join_class(
     req: ClassJoinRequest,
     student: User = Depends(get_verified_user),
     db: Session = Depends(get_db),
@@ -125,14 +126,16 @@ async def join_class(
     if student.role != ROLE_STUDENT:
         raise _forbidden("仅学生可加入班级")
 
-    if student.class_id is not None:
-        raise _bad_request("已加入班级，不能重复加入")
-
     repo = Repo(db)
-    klass = repo.get_class_by_invite_code(req.invite_code.strip().upper())
+    klass = repo.get_class_by_code_for_update(req.invite_code.strip().upper())
     if not klass:
         raise _not_found("班级邀请码不存在")
 
+    student = repo.get_user_by_id_for_update(student.id)
+    if not student or student.role != ROLE_STUDENT:
+        raise _forbidden("仅学生可加入班级")
+    if student.class_id is not None:
+        raise _bad_request("已加入班级，不能重复加入")
     student.class_id = klass.id
     db.commit()
 
@@ -191,7 +194,7 @@ async def class_students(
 
 
 @router.post("/remove-student")
-async def remove_student(
+def remove_student(
     req: RemoveStudentRequest,
     teacher: User = Depends(get_verified_user),
     db: Session = Depends(get_db),
@@ -200,13 +203,13 @@ async def remove_student(
     _require_teacher(teacher)
 
     repo = Repo(db)
-    klass = repo.get_class_by_id(req.class_id)
+    klass = repo.get_class_for_update(req.class_id)
     if not klass:
         raise _not_found("班级不存在")
     if klass.teacher_id != teacher.id:
         raise _forbidden("只能操作自己班级的学生")
 
-    student = repo.get_user_by_id(req.student_id)
+    student = repo.get_user_by_id_for_update(req.student_id)
     if not student:
         raise _not_found("学生不存在")
     if student.class_id != req.class_id:
@@ -219,7 +222,7 @@ async def remove_student(
 
 
 @router.post("/regenerate-invite")
-async def regenerate_invite(
+def regenerate_invite(
     req: RegenerateInviteRequest,
     user: User = Depends(get_verified_user),
     db: Session = Depends(get_db),
@@ -233,7 +236,7 @@ async def regenerate_invite(
         raise _forbidden("仅老师或管理员可重新生成邀请码")
 
     repo = Repo(db)
-    klass = repo.get_class_by_id(req.class_id)
+    klass = repo.get_class_for_update(req.class_id)
     if not klass:
         raise _not_found("班级不存在")
     if user.role == ROLE_TEACHER and klass.teacher_id != user.id:
@@ -248,14 +251,20 @@ async def regenerate_invite(
         raise _bad_request("邀请码生成失败，请重试")
 
     klass.invite_code = code
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        if getattr(exc.orig, 'args', [None])[0] != 1062 and 'UNIQUE constraint failed' not in str(exc.orig):
+            raise
+        raise _bad_request("邀请码生成失败，请重试") from exc
     db.refresh(klass)
 
     return ok({"class": _class_to_dict(klass), "invite_code": code})
 
 
 @router.post("/regenerate-bind-code")
-async def regenerate_bind_code(
+def regenerate_bind_code(
     req: RegenerateBindCodeRequest,
     user: User = Depends(get_verified_user),
     db: Session = Depends(get_db),
@@ -269,17 +278,22 @@ async def regenerate_bind_code(
         raise _forbidden("仅老师或管理员可重新生成绑定码")
 
     repo = Repo(db)
-    student = repo.get_user_by_id(req.student_id)
+    klass = None
+    if user.role == ROLE_TEACHER:
+        candidate = repo.get_user_by_id(req.student_id)
+        if not candidate:
+            raise _not_found("学生不存在")
+        if candidate.class_id is None:
+            raise _forbidden("该学生不在你的班级中")
+        klass = repo.get_class_for_update(candidate.class_id)
+    student = repo.get_user_by_id_for_update(req.student_id)
     if not student:
         raise _not_found("学生不存在")
     if student.role != ROLE_STUDENT:
         raise _bad_request("只能为学生生成绑定码")
 
     if user.role == ROLE_TEACHER:
-        if student.class_id is None:
-            raise _forbidden("该学生不在你的班级中")
-        klass = repo.get_class_by_id(student.class_id)
-        if not klass or klass.teacher_id != user.id:
+        if not klass or student.class_id != klass.id or klass.teacher_id != user.id:
             raise _forbidden("只能操作自己班级的学生")
 
     code = gen_bind_code()
@@ -291,7 +305,13 @@ async def regenerate_bind_code(
         raise _bad_request("绑定码生成失败，请重试")
 
     student.bind_code = code
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        if getattr(exc.orig, 'args', [None])[0] != 1062 and 'UNIQUE constraint failed' not in str(exc.orig):
+            raise
+        raise _bad_request("绑定码生成失败，请重试") from exc
     db.refresh(student)
 
     return ok({"student_id": student.id, "bind_code": code})

@@ -13,18 +13,13 @@
 不符。库表结构的唯一权威是 `app/models/entities.py`（CLAUDE.md 明确）。
 手抄 PRD 立刻就会引入方言问题，故此处一律从元数据编译。
 
-**三处必须做的翻译（否则生成的 SQL 在 MySQL 上跑不通）**
+**两处必须做的翻译（否则生成的 SQL 在 MySQL 上跑不通）**
 
 1. `default=` 是 **Python 层默认值**，SQLAlchemy 编译时不产出 DB 层 DEFAULT。
    不翻译的话会有 52 个列变成「NOT NULL 且无默认值」，纯 SQL 插入 admin
    会因 `total_points` / `status` / `must_change_password` 缺值而失败。
 2. `func.now()` 编译出的是 `DEFAULT now()`，**MySQL 8.0.13 之前是语法错误**
    （8.0.13 起才支持函数默认值表达式）。统一改写为 `DEFAULT CURRENT_TIMESTAMP`。
-3. `users.class_id → classes.id` 与 `classes.teacher_id → users.id` **互为外键**，
-   裸 SQL 按序建表会报 `ERROR 1824 Failed to open the referenced table 'users'`。
-   解决：外键内联进 CREATE TABLE，并在脚本首尾用
-   `SET FOREIGN_KEY_CHECKS=0/1` 包住（MySQL 8.4 实测通过）。
-
 **用法**
 
     python -m app.seed.export_ddl              # 生成到 ../zg-tsp-docs/sql/init.sql
@@ -218,6 +213,8 @@ def _render_admin_seed() -> str:
 
 def build_sql() -> str:
     """生成完整的 init.sql 文本。"""
+    if any(table.foreign_keys for table in Base.metadata.tables.values()):
+        raise ValueError("ORM 元数据包含物理外键，禁止导出")
     out: list[str] = []
     out.append("-- ============================================================================")
     out.append("-- zg-tsp 数据库初始化脚本")
@@ -234,13 +231,12 @@ def build_sql() -> str:
     out.append("--")
     out.append("-- 说明：")
     out.append("--   · 全部语句幂等，可重复执行")
-    out.append("--   · FOREIGN_KEY_CHECKS=0/1 用于绕开 users ↔ classes 的循环外键依赖")
+    out.append("--   · 不创建物理外键，关联完整性由应用维护")
     out.append(f"--   · admin 密码以占位符 {ADMIN_HASH_PLACEHOLDER} 写入，")
     out.append("--     直接用 mysql 导入会导致 admin 无法登录，必须经 scripts/init.sh")
     out.append("-- ============================================================================")
     out.append("")
     out.append("SET NAMES utf8mb4;")
-    out.append("SET FOREIGN_KEY_CHECKS=0;")
     out.append("")
 
     for table in Base.metadata.sorted_tables:
@@ -258,9 +254,6 @@ def build_sql() -> str:
 
     out.append("-- --- admin 账户 ---")
     out.append(_render_admin_seed())
-    out.append("")
-
-    out.append("SET FOREIGN_KEY_CHECKS=1;")
     out.append("")
 
     return "\n".join(out)

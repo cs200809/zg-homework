@@ -318,8 +318,9 @@ CREATE TABLE homework_records
     review_score     INTEGER,           -- 0–100，NULL 表示未批改
     review_comment   TEXT,
     reviewed_at      DATETIME,
-    reviewed_by      INTEGER REFERENCES users(id),
-    review_points    INTEGER NOT NULL DEFAULT 0, -- 实际已发放批改积分
+    reviewed_by      INTEGER,           -- 逻辑关联 users.id，不创建物理外键
+    review_points    INTEGER NOT NULL DEFAULT 0, -- 批改积分实际净变动累计
+    review_target_points INTEGER,                -- 上次批改目标档位积分，未批改为 NULL
     UNIQUE (homework_id, student_id)
 );
 
@@ -330,7 +331,7 @@ CREATE TABLE homework_review_rules
     min_score  INTEGER NOT NULL UNIQUE,
     points     INTEGER NOT NULL DEFAULT 0,
     enabled    BOOLEAN NOT NULL DEFAULT 1,
-    updated_by INTEGER REFERENCES users(id),
+    updated_by INTEGER, -- 逻辑关联 users.id，不创建物理外键
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -472,7 +473,7 @@ CREATE TABLE idiom_questions
 | game_sudoku_hard   | 数独-困难     | 15     | 20          | —                             |
 | game_idiom         | 成语接龙每题    | 1      | 20          | —                             |
 
-> 所有积分发放统一读 `point_rules`，修改后立即生效；规则禁用则不发放。
+> 常规积分发放读取 `point_rules`，修改后立即生效；规则禁用则不发放。作业批改积分按下方独立档位表计算。
 
 **作业批改档位种子**（表 `homework_review_rules`，PRD 5.3）
 
@@ -574,16 +575,23 @@ POST /classes/regenerate-bind-code {student_id}                  teacher(admin �
 
 - 分数按「作业批改档位」表（`homework_review_rules`，分数下限 → 积分）换算为**额外积分**，admin 可配档位
 - 匹配规则：取所有 `enabled` 且 `min_score <= score` 的档位中 `min_score` **最大**的一档；无匹配则发 0 积分（不报错）
-- 允许改分，积分按**差额**补发/回扣：`target = 新分数档位积分`，`granted = 已发放`，`delta = target - granted`
-- 学生余额不足时**扣到 0 为止、不追扣**，流水记实际扣减额（欠额不再追回）
+- 首次批改的旧目标为 0；改分时按**新分数匹配的目标档位积分 − 上次批改保存的目标档位积分**补发/回扣，并保存新目标。档位规则变动不改写已保存的目标。
+- 分数不变（包括单改评语）时不重新匹配档位、不调整积分，即使规则已变更也保留上次目标。
+- 学生余额不足时**扣到 0 为止、未扣足部分永久豁免**；流水记实际扣减额。`review_points` 是实际批改积分净变动累计，可能不同于目标快照，也可能为负。
 - 批改积分记 `point_logs.type='review'`，与提交时自动发放的 `homework` 类型隔离
 - 只有**已提交**的作业可批改；未提交返回 400「学生尚未提交」
 - 批改并发控制：批改时对 `homework_records` 行与 `users` 行加锁（`SELECT ... FOR UPDATE`），锁序固定为 `homework_records → users`，避免同一份作业重复发分与同一学生并发批改时余额互相覆盖
+- 存量 MySQL 升级：先备份数据库，在停止业务写入并确认数据库连接后运行 `python -m app.seed.migrate_homework_review --check` 查看待执行项，再运行 `python -m app.seed.migrate_homework_review`；`create_all()` 不会为已有表增加字段。
+  - 若 `homework_review_rules` 不存在，迁移在本次调用中建表并写入默认档位种子；若表已存在且非空，绝不覆盖已有规则。
+  - 若表已存在但为空，无法判断是管理员有意清空还是迁移中断所致，必须故障关闭：包括 `--check` 在内均报错停止，不自动写入种子。先检查备份并确认管理员意图，再由管理员手动恢复预期规则，之后重新检查并迁移。
+  - 已批改但缺少目标快照的记录按迁移时当前启用档位匹配初始化，无匹配记 0；不改变余额、实际净变动或流水。历史规则不可还原，因此此基线不一定等于当年的目标；重复执行不覆盖快照。
+  - MySQL DDL 会隐式提交，迁移并非原子操作；中断后应检查实际状态。若建表已提交但种子未写入，重跑会遇到已有空表并停止，须先按上述流程人工恢复规则，再重跑迁移；其他中断也可能需要人工恢复。
 
 ```
 POST /homework/create   {class_id, title, description, subject, deadline}  teacher
 POST /homework/list     {class_id, page, size}                             teacher
 POST /homework/today    {}                                                 student
+POST /homework/my-list  {page?, size?}                                     student
 POST /homework/detail   {homework_id}                                      all
 POST /homework/records  {homework_id}                                      teacher
 POST /homework/delete   {homework_id}                                      teacher
@@ -592,6 +600,8 @@ POST /homework/submit   multipart: homework_id, text_content, file?        stude
 POST /homework/review   {homework_id, student_id, score, comment?}          teacher
 POST /homework/pending  {page, size}                                       teacher
 ```
+
+`/homework/my-list` 仅学生可用，仅查询当前班级中该学生本人 `submit_time` 非空的记录（包含迟交），不包含已转出班级的作业。`page` 默认 1 且 ≥1，`size` 默认 20、范围 1–100。按 `submit_time` 倒序，时间相同时按作业记录 `id` 倒序稳定分页；数据发生变化时分页结果可能变化。无班级返回空分页。响应 `data` 为 `{list, total, page, size}`；列表每项含今日列表的作业字段 `id, class_id, teacher_id, title, description, subject, deadline, created_at, my_status, my_points`，以及 `my_record`，包含记录 `id, homework_id, student_id, start_time, submit_time, duration_minutes, status, file_url, text_content, points, suspicious, review_score, review_comment, reviewed_at, review_points`。时间为 ISO 8601 字符串，未批改字段可为 null。
 
 `/homework/review` 响应 `data` 含 `record`（含批改字段）、`points_delta`（目标差额：正=应补发，负=应回扣）、`awarded_points`（实际净变动：正=实发，负=实扣；余额不足时其绝对值小于 `|points_delta|`）。
 
@@ -846,6 +856,7 @@ POST /classes/regenerate-bind-code
 POST /homework/create
 POST /homework/list
 POST /homework/today
+POST /homework/my-list
 POST /homework/detail
 POST /homework/records
 POST /homework/delete

@@ -152,14 +152,14 @@ async def invite_list(
 
 
 @router.post("/invite/revoke")
-async def invite_revoke(
+def invite_revoke(
     req: InviteRevokeRequest,
     admin: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     """撤销未使用的邀请码。已使用/已撤销的拒绝。"""
     repo = Repo(db)
-    invite = repo.get_invite_by_id(req.code_id)
+    invite = repo.get_invite_for_update(invite_id=req.code_id)
     if not invite:
         raise _not_found("邀请码不存在")
 

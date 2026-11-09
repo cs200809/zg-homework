@@ -13,7 +13,6 @@ from sqlalchemy import (
     Boolean,
     Date,
     DateTime,
-    ForeignKey,
     Index,
     Integer,
     String,
@@ -45,7 +44,7 @@ class User(Base):
     role: Mapped[str] = mapped_column(String(10), nullable=False, comment="角色：admin/teacher/student/parent")
     nickname: Mapped[str | None] = mapped_column(String(30), comment="昵称")
     avatar: Mapped[str | None] = mapped_column(String(255), comment="头像地址")
-    class_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("classes.id"), comment="所属班级ID，学生用")
+    class_id: Mapped[int | None] = mapped_column(Integer, comment="所属班级ID，学生用")
     bind_code: Mapped[str | None] = mapped_column(String(8), comment="学生绑定码，家长凭此绑定孩子")
     total_points: Mapped[int] = mapped_column(Integer, default=0, comment="积分余额，不可为负")
     status: Mapped[str] = mapped_column(String(10), default="active", comment="状态：active 启用 / disabled 禁用")
@@ -62,13 +61,14 @@ class Class(Base):
 
     __tablename__ = "classes"
     __table_args__ = (
+        Index("ix_classes_teacher_id", "teacher_id"),
         {"comment": "班级表：老师创建，学生凭邀请码加入"},
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True, comment="班级ID")
     name: Mapped[str] = mapped_column(String(50), nullable=False, comment="班级名称")
     invite_code: Mapped[str] = mapped_column(String(8), unique=True, nullable=False, comment="班级邀请码，学生加入时使用")
-    teacher_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False, comment="班主任用户ID")
+    teacher_id: Mapped[int] = mapped_column(Integer, nullable=False, comment="班主任用户ID")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), comment="创建时间")
 
     def __repr__(self) -> str:
@@ -81,6 +81,8 @@ class TeacherInviteCode(Base):
 
     __tablename__ = "teacher_invite_codes"
     __table_args__ = (
+        Index("ix_teacher_invite_codes_created_by", "created_by"),
+        Index("ix_teacher_invite_codes_used_by_user_id", "used_by_user_id"),
         Index("ix_invite_code_status", "code", "status"),
         {"comment": "老师邀请码表：admin 发放，一码一用"},
     )
@@ -88,8 +90,8 @@ class TeacherInviteCode(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True, comment="邀请码ID")
     code: Mapped[str] = mapped_column(String(12), unique=True, nullable=False, comment="邀请码，12 位随机字符")
     status: Mapped[str] = mapped_column(String(10), default="unused", comment="状态：unused 未用 / used 已用 / expired 过期 / revoked 已撤销")
-    created_by: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False, comment="发放人（admin）用户ID")
-    used_by_user_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.id"), comment="使用者用户ID（使用后写入）")
+    created_by: Mapped[int] = mapped_column(Integer, nullable=False, comment="发放人（admin）用户ID")
+    used_by_user_id: Mapped[int | None] = mapped_column(Integer, comment="使用者用户ID（使用后写入）")
     expire_at: Mapped[datetime | None] = mapped_column(DateTime, comment="过期时间，空表示不过期")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), comment="创建时间")
     used_at: Mapped[datetime | None] = mapped_column(DateTime, comment="使用时间（被注册时写入）")
@@ -104,12 +106,14 @@ class Homework(Base):
 
     __tablename__ = "homework"
     __table_args__ = (
+        Index("ix_homework_class_id", "class_id"),
+        Index("ix_homework_teacher_id", "teacher_id"),
         {"comment": "作业表：老师布置"},
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True, comment="作业ID")
-    class_id: Mapped[int] = mapped_column(Integer, ForeignKey("classes.id"), nullable=False, comment="所属班级ID")
-    teacher_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False, comment="布置老师用户ID")
+    class_id: Mapped[int] = mapped_column(Integer, nullable=False, comment="所属班级ID")
+    teacher_id: Mapped[int] = mapped_column(Integer, nullable=False, comment="布置老师用户ID")
     title: Mapped[str] = mapped_column(String(100), nullable=False, comment="作业标题")
     description: Mapped[str | None] = mapped_column(Text, comment="作业描述/题目内容")
     subject: Mapped[str | None] = mapped_column(String(20), comment="科目：语文/数学/英语等")
@@ -126,6 +130,7 @@ class HomeworkRecord(Base):
 
     __tablename__ = "homework_records"
     __table_args__ = (
+        Index("ix_homework_records_reviewed_by", "reviewed_by"),
         UniqueConstraint("homework_id", "student_id", name="uq_homework_student"),
         Index("ix_homework_records_student", "student_id"),
         Index("ix_homework_records_pending", "homework_id", "reviewed_at"),
@@ -133,8 +138,8 @@ class HomeworkRecord(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True, comment="记录ID")
-    homework_id: Mapped[int] = mapped_column(Integer, ForeignKey("homework.id"), nullable=False, comment="作业ID")
-    student_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False, comment="学生用户ID")
+    homework_id: Mapped[int] = mapped_column(Integer, nullable=False, comment="作业ID")
+    student_id: Mapped[int] = mapped_column(Integer, nullable=False, comment="学生用户ID")
     start_time: Mapped[datetime | None] = mapped_column(DateTime, comment="开始写作业时间，重复点击不覆盖")
     submit_time: Mapped[datetime | None] = mapped_column(DateTime, comment="提交时间")
     duration_minutes: Mapped[int | None] = mapped_column(Integer, comment="用时（分钟）= 提交时间 - 开始时间；<1 分钟标记异常")
@@ -145,8 +150,9 @@ class HomeworkRecord(Base):
     review_score: Mapped[int | None] = mapped_column(Integer, comment="批改分数 0–100；NULL 表示未批改")
     review_comment: Mapped[str | None] = mapped_column(Text, comment="老师评语")
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, comment="批改时间")
-    reviewed_by: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.id"), comment="批改老师用户ID")
-    review_points: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"), comment="实际已发放的批改积分（改分时按差额补发/回扣）")
+    reviewed_by: Mapped[int | None] = mapped_column(Integer, comment="批改老师用户ID")
+    review_points: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"), comment="批改积分实际净变动累计")
+    review_target_points: Mapped[int | None] = mapped_column(Integer, comment="上次批改目标档位积分；未批改为NULL")
 
     def __repr__(self) -> str:
         return f"<HomeworkRecord hw={self.homework_id} stu={self.student_id} {self.status}>"
@@ -165,6 +171,7 @@ class HomeworkReviewRule(Base):
 
     __tablename__ = "homework_review_rules"
     __table_args__ = (
+        Index("ix_homework_review_rules_updated_by", "updated_by"),
         UniqueConstraint("min_score", name="uq_homework_review_rules_min_score"),
         {"comment": "作业批改档位表：分数下限 → 积分映射，admin 可改"},
     )
@@ -173,7 +180,7 @@ class HomeworkReviewRule(Base):
     min_score: Mapped[int] = mapped_column(Integer, nullable=False, comment="档位分数下限（含）")
     points: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default=text("0"), comment="该档位发放的积分")
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("1"), comment="是否启用；false 则跳过该档")
-    updated_by: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.id"), comment="最后修改人（admin）ID")
+    updated_by: Mapped[int | None] = mapped_column(Integer, comment="最后修改人（admin）ID")
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now(), comment="最后修改时间"
     )
@@ -193,7 +200,7 @@ class Checkin(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True, comment="签到ID")
-    student_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False, comment="学生用户ID")
+    student_id: Mapped[int] = mapped_column(Integer, nullable=False, comment="学生用户ID")
     checkin_date: Mapped[date] = mapped_column(Date, nullable=False, comment="签到日期")
     points: Mapped[int | None] = mapped_column(Integer, comment="本次获得积分（读 checkin_daily 规则）")
     streak: Mapped[int | None] = mapped_column(Integer, comment="连续签到天数，用于连续7天额外奖励")
@@ -208,11 +215,12 @@ class Article(Base):
 
     __tablename__ = "articles"
     __table_args__ = (
+        Index("ix_articles_author_id", "author_id"),
         {"comment": "文章表：课后阅读材料，teacher/admin 均可发布"},
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True, comment="文章ID")
-    author_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False, comment="作者用户ID")
+    author_id: Mapped[int] = mapped_column(Integer, nullable=False, comment="作者用户ID")
     created_role: Mapped[str | None] = mapped_column(String(10), comment="作者角色：teacher / admin")
     title: Mapped[str] = mapped_column(String(100), nullable=False, comment="文章标题")
     cover: Mapped[str | None] = mapped_column(String(255), comment="封面图地址")
@@ -221,6 +229,7 @@ class Article(Base):
     file_name: Mapped[str | None] = mapped_column(String(255), comment="原始文件名（迭代 v2.1）")
     file_type: Mapped[str | None] = mapped_column(String(20), comment="原始文件类型：pdf / docx（迭代 v2.1）")
     status: Mapped[str] = mapped_column(String(10), default="published", comment="状态：published 已发布 / hidden 已隐藏（学生端仅见 published）")
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, comment="软删除时间")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), comment="创建时间")
     updated_at: Mapped[datetime | None] = mapped_column(DateTime, comment="最后更新时间")
 
@@ -234,13 +243,14 @@ class ReadingRecord(Base):
 
     __tablename__ = "reading_records"
     __table_args__ = (
+        Index("ix_reading_records_student_id", "student_id"),
         UniqueConstraint("article_id", "student_id", "read_date", name="uq_reading_day"),
         {"comment": "阅读记录表：按时长积分，需心跳防挂机校验"},
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True, comment="记录ID")
-    article_id: Mapped[int] = mapped_column(Integer, ForeignKey("articles.id"), nullable=False, comment="文章ID")
-    student_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False, comment="学生用户ID")
+    article_id: Mapped[int] = mapped_column(Integer, nullable=False, comment="文章ID")
+    student_id: Mapped[int] = mapped_column(Integer, nullable=False, comment="学生用户ID")
     duration_seconds: Mapped[int] = mapped_column(Integer, default=0, comment="有效阅读时长（秒），仅累计通过心跳校验的时段")
     finished: Mapped[bool] = mapped_column(Boolean, default=False, comment="是否读完（滚动到底标记）")
     points: Mapped[int] = mapped_column(Integer, default=0, comment="本次阅读获得积分")
@@ -256,11 +266,12 @@ class GameRecord(Base):
 
     __tablename__ = "game_records"
     __table_args__ = (
+        Index("ix_game_records_student_id", "student_id"),
         {"comment": "游戏记录表：数独、成语接龙的成绩留痕"},
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True, comment="记录ID")
-    student_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False, comment="学生用户ID")
+    student_id: Mapped[int] = mapped_column(Integer, nullable=False, comment="学生用户ID")
     game_type: Mapped[str | None] = mapped_column(String(20), comment="游戏类型：sudoku 数独 / idiom 成语接龙")
     difficulty: Mapped[str | None] = mapped_column(String(10), comment="难度：数独用 easy/medium/hard")
     score: Mapped[int | None] = mapped_column(Integer, comment="游戏得分")
@@ -279,16 +290,17 @@ class PointLog(Base):
 
     __tablename__ = "point_logs"
     __table_args__ = (
+        Index("ix_point_logs_operator_id", "operator_id"),
         Index("ix_point_logs_student_date", "student_id", "log_date"),
         {"comment": "积分流水表（核心）：所有积分变动必写，保证可追溯"},
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True, comment="流水ID")
-    student_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False, comment="学生用户ID")
+    student_id: Mapped[int] = mapped_column(Integer, nullable=False, comment="学生用户ID")
     type: Mapped[str] = mapped_column(String(20), nullable=False, comment="类型：checkin/homework/reading/game/consume/review（consume 为负数）")
     points: Mapped[int] = mapped_column(Integer, nullable=False, comment="积分数值，正为发放、负为扣减")
     remark: Mapped[str | None] = mapped_column(String(255), comment="备注说明")
-    operator_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.id"), comment="操作人ID（家长扣分时为家长ID）")
+    operator_id: Mapped[int | None] = mapped_column(Integer, comment="操作人ID（家长扣分时为家长ID）")
     log_date: Mapped[date] = mapped_column(Date, nullable=False, comment="积分归属日期，用于日上限统计")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), comment="创建时间")
 
@@ -302,13 +314,14 @@ class ParentStudent(Base):
 
     __tablename__ = "parent_students"
     __table_args__ = (
+        Index("ix_parent_students_student_id", "student_id"),
         UniqueConstraint("parent_id", "student_id", name="uq_parent_student"),
         {"comment": "家长-学生关系表：一个家长可绑多个孩子"},
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True, comment="关系ID")
-    parent_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False, comment="家长用户ID")
-    student_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False, comment="学生用户ID")
+    parent_id: Mapped[int] = mapped_column(Integer, nullable=False, comment="家长用户ID")
+    student_id: Mapped[int] = mapped_column(Integer, nullable=False, comment="学生用户ID")
 
     def __repr__(self) -> str:
         return f"<ParentStudent p={self.parent_id} s={self.student_id}>"
@@ -324,6 +337,7 @@ class PointRule(Base):
 
     __tablename__ = "point_rules"
     __table_args__ = (
+        Index("ix_point_rules_updated_by", "updated_by"),
         Index("ix_point_rules_key", "rule_key"),
         {"comment": "积分规则表：admin 可改，修改后立即生效（daily_limit 为每日次数上限）"},
     )
@@ -335,7 +349,7 @@ class PointRule(Base):
     daily_limit: Mapped[int | None] = mapped_column(Integer, comment="每日次数上限；空表示不限。游戏规则为当日合计积分上限")
     extra_config: Mapped[str | None] = mapped_column(Text, comment="扩展配置（JSON 字符串），如 {\"single_article_limit\":10}")
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, comment="是否启用；false 则不发放该积分")
-    updated_by: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.id"), comment="最后修改人（admin）ID")
+    updated_by: Mapped[int | None] = mapped_column(Integer, comment="最后修改人（admin）ID")
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now(), comment="最后更新时间")
 
     def __repr__(self) -> str:
@@ -348,11 +362,12 @@ class AdminLog(Base):
 
     __tablename__ = "admin_logs"
     __table_args__ = (
+        Index("ix_admin_logs_admin_id", "admin_id"),
         {"comment": "管理员操作审计表：禁用、规则修改、文章删除等敏感操作留痕"},
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True, comment="日志ID")
-    admin_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False, comment="操作人（admin）用户ID")
+    admin_id: Mapped[int] = mapped_column(Integer, nullable=False, comment="操作人（admin）用户ID")
     action: Mapped[str] = mapped_column(String(50), nullable=False, comment="操作标识，如 user_disable / rule_update")
     target_type: Mapped[str | None] = mapped_column(String(30), comment="操作对象类型：user / point_rule / teacher_invite_code / article")
     target_id: Mapped[int | None] = mapped_column(Integer, comment="操作对象ID")
@@ -369,6 +384,7 @@ class IdiomQuestion(Base):
 
     __tablename__ = "idiom_questions"
     __table_args__ = (
+        Index("ix_idiom_questions_created_by", "created_by"),
         Index("ix_idiom_enabled", "enabled"),
         {"comment": "成语接龙题库表：由 admin 后台导入"},
     )
@@ -379,7 +395,7 @@ class IdiomQuestion(Base):
     distractors: Mapped[str | None] = mapped_column(Text, comment="干扰项（JSON 数组），建议≥2个，不足时服务端随机补齐")
     difficulty: Mapped[str] = mapped_column(String(10), default="normal", comment="难度：normal / hard")
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, comment="是否启用；false 则学生端抽不到")
-    created_by: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.id"), comment="导入人（admin）ID")
+    created_by: Mapped[int | None] = mapped_column(Integer, comment="导入人（admin）ID")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), comment="导入时间")
 
     def __repr__(self) -> str:

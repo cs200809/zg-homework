@@ -60,9 +60,11 @@ async def do_checkin(
     _require_student(student)
 
     repo = Repo(db)
+    # 先锁学生，再插入引用 users 的签到记录，避免外键共享锁升级。
+    student = repo.get_user_by_id_for_update(student.id)
     today = date.today()
 
-    existing = repo.get_checkin(student.id, today)
+    existing = repo.get_checkin(student.id, today, for_update=True)
     if existing:
         # 当天已签到，不重复发放（PRD 5.4）
         return ok({
@@ -85,7 +87,7 @@ async def do_checkin(
         )
     )
 
-    streak = _calc_streak(repo.list_checkins_desc(student.id), today)
+    streak = _calc_streak(repo.list_checkins_desc(student.id, for_update=True), today)
     checkin.streak = streak
 
     # 基础签到积分

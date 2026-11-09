@@ -252,7 +252,7 @@ async def article_detail(
 
 
 @router.post("/heartbeat")
-async def heartbeat(
+def heartbeat(
     req: HeartbeatRequest,
     student: User = Depends(get_verified_user),
     db: Session = Depends(get_db),
@@ -266,7 +266,7 @@ async def heartbeat(
         raise _forbidden("仅学生可阅读计时")
 
     repo = Repo(db)
-    art = repo.get_article_by_id(req.article_id)
+    art = repo.get_article_by_id(req.article_id, for_update=True)
     if not art:
         raise _not_found("文章不存在")
     if art.status != ARTICLE_PUBLISHED:
@@ -276,8 +276,10 @@ async def heartbeat(
     upper = HEARTBEAT_INTERVAL + HEARTBEAT_TOLERANCE
     suspicious = req.seconds > upper
 
+    # 先锁学生，后查/插阅读记录，避免子表外键锁升级及旧快照。
+    student = repo.get_user_by_id_for_update(student.id)
     today = date.today()
-    rec = repo.get_reading_record(art.id, student.id, today)
+    rec = repo.get_reading_record(art.id, student.id, today, for_update=True)
     if not rec:
         rec = repo.add_reading_record(
             ReadingRecord(
@@ -376,7 +378,7 @@ def _award_reading_points(
 
 
 @router.post("/finish")
-async def finish_reading(
+def finish_reading(
     req: ArticleIdRequest,
     student: User = Depends(get_verified_user),
     db: Session = Depends(get_db),
@@ -386,12 +388,14 @@ async def finish_reading(
         raise _forbidden("仅学生可阅读")
 
     repo = Repo(db)
-    art = repo.get_article_by_id(req.article_id)
+    art = repo.get_article_by_id(req.article_id, for_update=True)
     if not art or art.status != ARTICLE_PUBLISHED:
         raise _not_found("文章不存在")
 
+    # 先锁学生，后查/插阅读记录，避免子表外键锁升级及旧快照。
+    student = repo.get_user_by_id_for_update(student.id)
     today = date.today()
-    rec = repo.get_reading_record(art.id, student.id, today)
+    rec = repo.get_reading_record(art.id, student.id, today, for_update=True)
     if not rec:
         rec = repo.add_reading_record(
             ReadingRecord(
@@ -474,14 +478,14 @@ async def article_records(
 
 
 @router.post("/delete")
-async def delete_article(
+def delete_article(
     req: ArticleIdRequest,
     user: User = Depends(get_verified_user),
     db: Session = Depends(get_db),
 ):
     """删除文章 —— 老师仅能删自己的；admin 可删任意（PRD 5.5、5.8.4）。"""
     repo = Repo(db)
-    art = repo.get_article_by_id(req.article_id)
+    art = repo.get_article_by_id(req.article_id, for_update=True)
     if not art:
         raise _not_found("文章不存在")
 
@@ -490,13 +494,13 @@ async def delete_article(
     if user.role not in (ROLE_TEACHER, ROLE_ADMIN):
         raise _forbidden("无权限删除文章")
 
-    db.delete(art)
+    art.deleted_at = datetime.now()
     db.commit()
     return ok({"deleted_id": req.article_id})
 
 
 @router.post("/export-pdf")
-async def export_article_pdf(
+def export_article_pdf(
     req: ArticleIdRequest,
     user: User = Depends(get_verified_user),
     db: Session = Depends(get_db),
@@ -507,7 +511,7 @@ async def export_article_pdf(
     返回相对路径供客户端下载/预览。学生端仅可导出 published 文章。
     """
     repo = Repo(db)
-    art = repo.get_article_by_id(req.article_id)
+    art = repo.get_article_by_id(req.article_id, for_update=True)
     if not art:
         raise _not_found("文章不存在")
     if user.role == ROLE_STUDENT and art.status != ARTICLE_PUBLISHED:

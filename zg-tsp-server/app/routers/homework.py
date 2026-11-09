@@ -9,6 +9,7 @@
 积分：按时交读 `homework_on_time`，迟交读 `homework_late`（PRD 4.2/第 6 节）。
 """
 
+import logging
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
@@ -222,6 +223,27 @@ async def today_homework(
     return ok({"list": result, "total": len(result), "class_id": student.class_id})
 
 
+@router.post("/my-list")
+async def my_homework_list(
+    req: HomeworkPendingRequest,
+    student: User = Depends(get_verified_user),
+    db: Session = Depends(get_db),
+):
+    """学生当前班级中自己的已提交作业，按提交时间倒序。"""
+    _require_student(student)
+    result = []
+    total = 0
+    if student.class_id is not None:
+        rows, total = Repo(db).list_my_submitted_homework(
+            student.id, student.class_id, req.page, req.size
+        )
+        for hw, record in rows:
+            item = _homework_to_dict(hw)
+            item.update(my_status=record.status, my_points=record.points, my_record=_record_to_dict(record))
+            result.append(item)
+    return ok({"list": result, "total": total, "page": req.page, "size": req.size})
+
+
 @router.post("/detail")
 async def homework_detail(
     req: HomeworkIdRequest,
@@ -308,13 +330,13 @@ async def review_homework(
 ):
     """老师批改作业：打分 + 评语，积分按差额补发/回扣（PRD 5.3）。
 
-    积分口径：`target` = 新分数匹配的档位积分；`granted` = 该记录已发放的
-    批改积分；差额为正则补发，为负则回扣（余额不足时扣到 0 为止）。
+    积分按新旧目标档位差额调整，余额不足时未扣足部分永久豁免。
+    分数不变时保留原目标，仅更新评语等批改信息。
     """
     _require_teacher(teacher)
 
     repo = Repo(db)
-    hw = repo.get_homework_by_id(req.homework_id)
+    hw = repo.get_homework_for_update(req.homework_id)
     if not hw:
         raise _not_found("作业不存在")
     _own_class_or_403(db, teacher, hw.class_id)
@@ -326,9 +348,17 @@ async def review_homework(
     if record is None or record.submit_time is None:
         raise _bad_request("学生尚未提交，不可批改")
 
-    target = repo.match_review_points(req.score)
+    # 升级脚本会为已批改的存量记录建立目标快照。
+    previous_target = record.review_target_points
+    if record.review_score is not None and previous_target is None:
+        raise _bad_request("批改目标积分缺失，请先执行作业批改数据迁移")
+    if record.review_score == req.score and previous_target is not None:
+        target = previous_target
+    else:
+        target = repo.match_review_points(req.score)
     granted = record.review_points or 0
-    delta = target - granted
+    # 只按新旧目标计算差额，未扣足的历史部分不再追扣。
+    delta = target - (previous_target if previous_target is not None else 0)
 
     from app.services import point_service
 
@@ -359,10 +389,9 @@ async def review_homework(
     record.review_comment = req.comment
     record.reviewed_at = datetime.now()
     record.reviewed_by = teacher.id
-    # awarded 是**净变动**（正=实发，负=实扣），故直接相加。
-    # delta<0 且余额不足时 |awarded| < |delta|，此时 review_points 会大于
-    # 新分数对应的目标积分 —— 这是「扣到 0 为止、不追扣」的既定语义。
+    # 两种口径分别保存：实际净变动和本次目标，未扣足部分不再追扣。
     record.review_points = granted + awarded
+    record.review_target_points = target
 
     db.commit()
     db.refresh(record)
@@ -402,17 +431,18 @@ async def delete_homework(
     _require_teacher(teacher)
 
     repo = Repo(db)
-    hw = repo.get_homework_by_id(req.homework_id)
+    hw = repo.get_homework_for_update(req.homework_id)
     if not hw:
         raise _not_found("作业不存在")
     _own_class_or_403(db, teacher, hw.class_id)
 
-    submitted = repo.count_submitted_records(hw.id)
+    records = repo.list_homework_records_for_update(hw.id)
+    submitted = sum(rec.submit_time is not None for rec in records)
     if submitted > 0:
         raise _bad_request(f"已有 {submitted} 人提交，不可删除")
 
     # 同时清理未提交的开始记录
-    for rec in repo.list_homework_records(hw.id):
+    for rec in records:
         db.delete(rec)
     db.delete(hw)
     db.commit()
@@ -430,13 +460,13 @@ async def start_homework(
     _require_student(student)
 
     repo = Repo(db)
-    hw = repo.get_homework_by_id(req.homework_id)
+    hw = repo.get_homework_for_update(req.homework_id)
     if not hw:
         raise _not_found("作业不存在")
     if hw.class_id != student.class_id:
         raise _forbidden("不能操作其他班级的作业")
 
-    record = repo.get_homework_record(hw.id, student.id)
+    record = repo.get_homework_record_for_update(hw.id, student.id)
     if record:
         if record.submit_time is not None:
             raise _bad_request("已提交，不可再次开始")
@@ -471,59 +501,80 @@ async def submit_homework(
     """
     _require_student(student)
 
-    repo = Repo(db)
-    hw = repo.get_homework_by_id(homework_id)
-    if not hw:
-        raise _not_found("作业不存在")
-    if hw.class_id != student.class_id:
-        raise _forbidden("不能操作其他班级的作业")
-
     if not text_content and not file:
         raise _bad_request("请填写内容或上传文件")
 
-    record = repo.get_homework_record(hw.id, student.id)
-    if record and record.submit_time is not None:
-        raise _bad_request("已提交，不可重复提交")
+    repo = Repo(db)
 
-    now = datetime.now()
-    if not record:
-        record = repo.add_homework_record(
-            HomeworkRecord(homework_id=hw.id, student_id=student.id)
+    # 附件先落盘再进事务：持锁期间 await 读文件会让事件循环让出，
+    # 与并发请求的行锁等待互相等待，单 worker 下会挂死整个服务。
+    saved_url = None
+    if file is not None and file.filename:
+        saved_url = await _save_upload(file)
+
+    try:
+        hw = repo.get_homework_for_update(homework_id)
+        if not hw:
+            raise _not_found("作业不存在")
+        if hw.class_id != student.class_id:
+            raise _forbidden("不能操作其他班级的作业")
+
+        # 保持作业父行 -> 记录 -> 学生顺序；新记录插入前锁学生，
+        # 避免先取得 users 外键共享锁再升级为排他锁。
+        record = repo.get_homework_record_for_update(hw.id, student.id)
+        student = repo.get_user_by_id_for_update(student.id)
+        if record and record.submit_time is not None:
+            raise _bad_request("已提交，不可重复提交")
+
+        now = datetime.now()
+        if not record:
+            record = repo.add_homework_record(
+                HomeworkRecord(homework_id=hw.id, student_id=student.id)
+            )
+
+        record.submit_time = now
+        record.text_content = text_content
+        record.status = HOMEWORK_LATE if now > hw.deadline else HOMEWORK_SUBMITTED
+        if saved_url is not None:
+            record.file_url = saved_url
+
+        # 用时 = 提交时间 - 开始时间（无开始时间则不计算）
+        if record.start_time is not None:
+            delta = now - record.start_time
+            record.duration_minutes = max(0, int(delta.total_seconds() // 60))
+
+        db.flush()
+
+        # 发放积分：按时交 / 迟交读不同规则（PRD 4.2）
+        from app.services import point_service
+
+        rule_key = (
+            "homework_late" if record.status == HOMEWORK_LATE else "homework_on_time"
+        )
+        record.points = point_service.award(
+            db,
+            student.id,
+            POINT_TYPE_HOMEWORK,
+            rule_key,
+            remark=f"作业：{hw.title}",
+            operator_id=student.id,
+            # 作业无次数日上限概念，按规则表发放
+            enforce_limit=True,
         )
 
-    record.submit_time = now
-    record.text_content = text_content
-    record.status = HOMEWORK_LATE if now > hw.deadline else HOMEWORK_SUBMITTED
+        db.commit()
+    except BaseException:
+        db.rollback()
+        if saved_url is not None:
+            from pathlib import Path
+            from app.config import settings
 
-    # 用时 = 提交时间 - 开始时间（无开始时间则不计算）
-    if record.start_time is not None:
-        delta = now - record.start_time
-        record.duration_minutes = max(0, int(delta.total_seconds() // 60))
-
-    # 文件上传（PRD 10.1：白名单 jpg/png/pdf，≤10MB）
-    if file is not None and file.filename:
-        record.file_url = await _save_upload(file)
-
-    db.flush()
-
-    # 发放积分：按时交 / 迟交读不同规则（PRD 4.2）
-    from app.services import point_service
-
-    rule_key = (
-        "homework_late" if record.status == HOMEWORK_LATE else "homework_on_time"
-    )
-    record.points = point_service.award(
-        db,
-        student.id,
-        POINT_TYPE_HOMEWORK,
-        rule_key,
-        remark=f"作业：{hw.title}",
-        operator_id=student.id,
-        # 作业无次数日上限概念，按规则表发放
-        enforce_limit=True,
-    )
-
-    db.commit()
+            try:
+                (Path(settings.upload_dir) / Path(saved_url).name).unlink(missing_ok=True)
+            except OSError:
+                # 清理失败不应掩盖原始异常
+                logging.getLogger(__name__).warning("清理上传文件失败：%s", saved_url)
+        raise
     return ok({"record": _record_to_dict(record)})
 
 
