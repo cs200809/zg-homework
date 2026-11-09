@@ -138,7 +138,7 @@ export default function StudentHomeworkDetail() {
         )}
       </Descriptions>
 
-      {rec?.suspicious && (
+      {rec?.suspicious && !rec.reviewed_at && (
         <Alert
           type="warning"
           showIcon
@@ -164,6 +164,7 @@ export default function StudentHomeworkDetail() {
                       : '#f5222d',
               }}
             />
+            <Statistic title="批改积分" value={rec.review_points ?? 0} suffix="分" />
             <div style={{ flex: 1, minWidth: 240 }}>
               <Typography.Text type="secondary">评语</Typography.Text>
               <div style={{ whiteSpace: 'pre-wrap', marginTop: 4 }}>
@@ -175,9 +176,9 @@ export default function StudentHomeworkDetail() {
             </div>
           </Space>
         </Card>
-      ) : (
+      ) : submitted ? (
         <Alert type="info" showIcon message="老师尚未批改" style={{ marginBottom: 16 }} />
-      )}
+      ) : null}
 
       {submitted ? (
         <Alert type="success" showIcon message="已提交，不可重复提交" />

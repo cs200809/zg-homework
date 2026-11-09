@@ -212,6 +212,7 @@ class _HomeworkDetailPageState extends State<HomeworkDetailPage> {
                     ),
                   ),
                 if (submitted) ...[
+                  HomeworkReviewResult(record: rec!),
                   const SizedBox(height: 12),
                   Card(
                     color: Colors.green.shade50,
@@ -225,9 +226,9 @@ class _HomeworkDetailPageState extends State<HomeworkDetailPage> {
                                   fontWeight: FontWeight.bold,
                                   color: Colors.green)),
                           const SizedBox(height: 6),
-                          Text('用时：${rec?['duration_minutes']} 分钟'),
-                          Text('积分：${rec?['points']} 分'),
-                          if (rec?['suspicious'] == true)
+                          Text('用时：${rec['duration_minutes']} 分钟'),
+                          Text('积分：${rec['points']} 分'),
+                          if (rec['suspicious'] == true)
                             const Padding(
                               padding: EdgeInsets.only(top: 6),
                               child: Text(
@@ -287,6 +288,29 @@ class _HomeworkDetailPageState extends State<HomeworkDetailPage> {
       ],
     ),
   );
+}
+
+class HomeworkReviewResult extends StatelessWidget {
+  const HomeworkReviewResult({super.key, required this.record});
+  final Map<String, dynamic> record;
+
+  @override
+  Widget build(BuildContext context) {
+    if (record['reviewed_at'] == null) {
+      return const Card(child: ListTile(title: Text('老师尚未批改')));
+    }
+    final comment = (record['review_comment'] as String?)?.trim();
+    return Card(child: Padding(
+      padding: const EdgeInsets.all(12),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        const Text('老师批改', style: TextStyle(fontWeight: FontWeight.bold)),
+        Text('分数：${record['review_score']} 分'),
+        Text('评语：${comment == null || comment.isEmpty ? '老师未写评语' : comment}'),
+        Text('批改时间：${_fmt(record['reviewed_at'] as String)}'),
+        Text('批改积分：${record['review_points'] ?? 0} 分'),
+      ]),
+    ));
+  }
 }
 
 String _fmt(String iso) {

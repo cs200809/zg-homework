@@ -3,9 +3,12 @@ library;
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/api_client.dart';
 import '../../core/apis.dart';
+import '../../core/config.dart';
 import '../../core/models.dart';
 import '../../widgets/common.dart';
 import '../common/profile_page.dart';
@@ -525,9 +528,19 @@ class _HomeworkRecordsPageState extends State<_HomeworkRecordsPage> {
     try {
       final r = await TeacherApi.instance.homeworkRecords(widget.homeworkId);
       if (mounted) setState(() => _data = r);
+    } catch (e) {
+      if (mounted) showSnack(context, errorMessage(e), error: true);
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  Future<void> _review(Map<String, dynamic> record) async {
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (_) => _ReviewDialog(homeworkId: widget.homeworkId, record: record),
+    );
+    if (saved == true && mounted) await _load();
   }
 
   @override
@@ -570,6 +583,7 @@ class _HomeworkRecordsPageState extends State<_HomeworkRecordsPage> {
                         margin: const EdgeInsets.only(bottom: 6),
                         child: ListTile(
                           dense: true,
+                          onTap: r['submit_time'] != null ? () => _review(r) : null,
                           title: Text(r['nickname'] as String? ?? r['username'] as String? ?? ''),
                           subtitle: Text(
                             r['start_time'] == null
@@ -590,6 +604,14 @@ class _HomeworkRecordsPageState extends State<_HomeworkRecordsPage> {
                               ),
                               const SizedBox(width: 4),
                               Text('${r['points'] ?? 0}分'),
+                              if (r['submit_time'] != null) ...[
+                                const SizedBox(width: 8),
+                                Text(
+                                  r['review_score'] == null ? '批改' : '修改批改',
+                                  style: const TextStyle(
+                                      fontSize: 12, color: Colors.blue),
+                                ),
+                              ],
                             ],
                           ),
                         ),
@@ -599,6 +621,89 @@ class _HomeworkRecordsPageState extends State<_HomeworkRecordsPage> {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _ReviewDialog extends StatefulWidget {
+  const _ReviewDialog({required this.homeworkId, required this.record});
+  final int homeworkId;
+  final Map<String, dynamic> record;
+
+  @override
+  State<_ReviewDialog> createState() => _ReviewDialogState();
+}
+
+class _ReviewDialogState extends State<_ReviewDialog> {
+  late final TextEditingController _score;
+  late final TextEditingController _comment;
+  bool _saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _score = TextEditingController(text: widget.record['review_score']?.toString() ?? '');
+    _comment = TextEditingController(text: widget.record['review_comment'] as String? ?? '');
+  }
+
+  @override
+  void dispose() {
+    _score.dispose();
+    _comment.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    final score = int.tryParse(_score.text);
+    if (score == null || score < 0 || score > 100) {
+      showSnack(context, '请输入 0 到 100 的整数分数', error: true);
+      return;
+    }
+    setState(() => _saving = true);
+    try {
+      await TeacherApi.instance.reviewHomework(
+        homeworkId: widget.homeworkId,
+        studentId: widget.record['student_id'] as int,
+        score: score,
+        comment: _comment.text.trim(),
+      );
+      if (mounted) Navigator.pop(context, true);
+    } catch (e) {
+      if (mounted) showSnack(context, errorMessage(e), error: true);
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  Future<void> _openAttachment(String path) async {
+    final uri = Uri.parse(AppConfig.apiBaseUrl).resolve(path);
+    try {
+      if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+        throw StateError('无法打开附件');
+      }
+    } catch (_) {
+      if (mounted) showSnack(context, '无法打开附件', error: true);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final text = widget.record['text_content'] as String?;
+    final file = widget.record['file_url'] as String?;
+    return AlertDialog(
+      title: Text('批改作业 - ${widget.record['nickname'] ?? widget.record['username'] ?? ''}'),
+      content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+        const Text('学生作答', style: TextStyle(fontWeight: FontWeight.bold)),
+        SelectableText(text == null || text.isEmpty ? '无文字作答' : text),
+        if (file != null && file.isNotEmpty)
+          TextButton.icon(onPressed: () => _openAttachment(file), icon: const Icon(Icons.attach_file), label: const Text('查看附件')),
+        TextField(controller: _score, keyboardType: TextInputType.number, inputFormatters: [FilteringTextInputFormatter.digitsOnly], decoration: const InputDecoration(labelText: '分数（0–100）')),
+        TextField(controller: _comment, maxLength: 2000, maxLines: 3, decoration: const InputDecoration(labelText: '评语（选填）')),
+      ])),
+      actions: [
+        TextButton(onPressed: _saving ? null : () => Navigator.pop(context), child: const Text('取消')),
+        FilledButton(onPressed: _saving ? null : _save, child: Text(_saving ? '提交中' : '提交批改')),
+      ],
     );
   }
 }

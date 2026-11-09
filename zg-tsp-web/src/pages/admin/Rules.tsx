@@ -1,6 +1,7 @@
 /** admin 积分规则管理（PRD 5.8.3、9 admin 端）。 */
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import axios from 'axios'
 import {
   App,
   Button,
@@ -26,6 +27,10 @@ export default function AdminRules() {
   const [loading, setLoading] = useState(true)
   const [editing, setEditing] = useState<PointRule | null>(null)
   const [rules, setRules] = useState<HomeworkReviewRule[]>([])
+  const [rulesLoading, setRulesLoading] = useState(true)
+  const rulesRequest = useRef(0)
+  const mutationLock = useRef(false)
+  const [savingRule, setSavingRule] = useState(false)
   const [creating, setCreating] = useState(false)
   const [editingRule, setEditingRule] = useState<HomeworkReviewRule | null>(null)
   // 新增与编辑各用一个 Form 实例：同一实例被两个 <Form> 复用时，
@@ -50,11 +55,15 @@ export default function AdminRules() {
   }, [load])
 
   const loadRules = useCallback(async () => {
+    const request = ++rulesRequest.current
+    setRulesLoading(true)
     try {
       const r = await reviewRuleApi.list()
-      setRules(r.list)
+      if (request === rulesRequest.current) setRules(r.list)
     } catch (e) {
-      message.error(e instanceof Error ? e.message : '加载批改档位失败')
+      if (request === rulesRequest.current) message.error(e instanceof Error ? e.message : '加载批改档位失败')
+    } finally {
+      if (request === rulesRequest.current) setRulesLoading(false)
     }
   }, [message])
 
@@ -62,40 +71,69 @@ export default function AdminRules() {
     void loadRules()
   }, [loadRules])
 
+  function beginRuleMutation() {
+    if (mutationLock.current) return false
+    mutationLock.current = true
+    setSavingRule(true)
+    return true
+  }
+
+  function endRuleMutation() {
+    mutationLock.current = false
+    setSavingRule(false)
+  }
+
   async function onCreateRule(values: { min_score: number; points: number }) {
+    if (!beginRuleMutation()) return
     try {
       await reviewRuleApi.create(values.min_score, values.points)
+      ++rulesRequest.current
       message.success('档位已新增')
       setCreating(false)
       createForm.resetFields()
       await loadRules()
     } catch (e) {
-      message.error(e instanceof Error ? e.message : '新增档位失败')
+      const serverMessage = axios.isAxiosError(e) && typeof e.response?.data?.message === 'string'
+        ? e.response.data.message : null
+      message.error(serverMessage || (e instanceof Error ? e.message : '新增档位失败'))
+    } finally {
+      endRuleMutation()
     }
   }
 
   async function onUpdateRule(values: { points: number; enabled: boolean }) {
-    if (!editingRule) return
+    if (!editingRule || !beginRuleMutation()) return
+    const changes: { points?: number; enabled?: boolean } = {}
+    if (values.points !== editingRule.points) changes.points = values.points
+    if (values.enabled !== editingRule.enabled) changes.enabled = values.enabled
     try {
-      await reviewRuleApi.update(editingRule.id, {
-        points: values.points,
-        enabled: values.enabled,
-      })
+      if (Object.keys(changes).length === 0) {
+        setEditingRule(null)
+        return
+      }
+      await reviewRuleApi.update(editingRule.id, changes)
+      ++rulesRequest.current
       message.success('档位已更新')
       setEditingRule(null)
       editForm.resetFields()
       await loadRules()
     } catch (e) {
       message.error(e instanceof Error ? e.message : '更新档位失败')
+    } finally {
+      endRuleMutation()
     }
   }
 
   async function onToggleRule(rule: HomeworkReviewRule) {
+    if (!beginRuleMutation()) return
     try {
       await reviewRuleApi.update(rule.id, { enabled: !rule.enabled })
+      ++rulesRequest.current
       await loadRules()
     } catch (e) {
       message.error(e instanceof Error ? e.message : '操作失败')
+    } finally {
+      endRuleMutation()
     }
   }
 
@@ -264,14 +302,16 @@ export default function AdminRules() {
         title="作业批改档位"
         style={{ marginTop: 16 }}
         extra={
-          <Button type="primary" onClick={openCreateRule}>
+          <Button type="primary" disabled={savingRule} onClick={openCreateRule}>
             新增档位
           </Button>
         }
       >
+        <p>批改积分按分数命中的最高启用档位发放；没有命中时不发放积分。</p>
         <Table<HomeworkReviewRule>
           rowKey="id"
           dataSource={rules}
+          loading={rulesLoading}
           pagination={false}
           locale={{ emptyText: '暂无档位' }}
           columns={[
@@ -287,14 +327,14 @@ export default function AdminRules() {
               dataIndex: 'enabled',
               width: 100,
               render: (v: boolean, r) => (
-                <Switch checked={v} onChange={() => onToggleRule(r)} />
+                <Switch checked={v} disabled={savingRule} onChange={() => onToggleRule(r)} />
               ),
             },
             {
               title: '操作',
               width: 100,
               render: (_: unknown, r) => (
-                <Button size="small" onClick={() => openEditRule(r)}>
+                <Button size="small" disabled={savingRule} onClick={() => openEditRule(r)}>
                   编辑
                 </Button>
               ),
@@ -306,8 +346,12 @@ export default function AdminRules() {
       <Modal
         title="新增档位"
         open={creating}
-        onCancel={() => setCreating(false)}
+        onCancel={() => { if (!savingRule) setCreating(false) }}
         onOk={() => createForm.submit()}
+        confirmLoading={savingRule}
+        cancelButtonProps={{ disabled: savingRule }}
+        closable={!savingRule}
+        maskClosable={!savingRule}
         okText="保存"
         cancelText="取消"
         width={480}
@@ -316,15 +360,15 @@ export default function AdminRules() {
           <Form.Item
             name="min_score"
             label="分数下限（含）"
-            rules={[{ required: true, message: '请输入分数下限' }]}
-            extra="该分数及以上命中此档；下限不可重复"
+            rules={[{ required: true, message: '请输入分数下限' }, { type: 'integer', message: '请输入整数' }]}
+            extra="下限不可重复；实际命中的是分数不超过它的最高启用档位"
           >
             <InputNumber min={0} max={100} style={{ width: '100%' }} />
           </Form.Item>
           <Form.Item
             name="points"
             label="积分值"
-            rules={[{ required: true, message: '请输入积分值' }]}
+            rules={[{ required: true, message: '请输入积分值' }, { type: 'integer', message: '请输入整数' }]}
           >
             <InputNumber min={0} max={10000} style={{ width: '100%' }} />
           </Form.Item>
@@ -334,14 +378,18 @@ export default function AdminRules() {
       <Modal
         title={editingRule ? `编辑档位：${editingRule.min_score} 分及以上` : ''}
         open={editingRule != null}
-        onCancel={() => setEditingRule(null)}
+        onCancel={() => { if (!savingRule) setEditingRule(null) }}
         onOk={() => editForm.submit()}
+        confirmLoading={savingRule}
+        cancelButtonProps={{ disabled: savingRule }}
+        closable={!savingRule}
+        maskClosable={!savingRule}
         okText="保存"
         cancelText="取消"
         width={480}
       >
         <Form form={editForm} layout="vertical" onFinish={onUpdateRule}>
-          <Form.Item name="points" label="积分值" rules={[{ required: true, message: '请输入积分值' }]}>
+          <Form.Item name="points" label="积分值" rules={[{ required: true, message: '请输入积分值' }, { type: 'integer', message: '请输入整数' }]}>
             <InputNumber min={0} max={10000} style={{ width: '100%' }} />
           </Form.Item>
           <Form.Item name="enabled" label="启用" valuePropName="checked">
