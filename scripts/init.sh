@@ -10,7 +10,7 @@
 #
 # 环境变量：
 #   REPOS_DIR            五个仓库所在目录（默认自动探测，同 dev.sh）
-#   ADMIN_INIT_PASSWORD  admin 初始密码（未设则随机生成并打印一次）
+#   ADMIN_INIT_PASSWORD  新建或修复占位符账号的密码（不会重置已有正常密码）
 #   MYSQL_HOST/MYSQL_PORT/MYSQL_USER/MYSQL_PASSWORD/MYSQL_DATABASE
 #                        覆盖 .env 中 DATABASE_URL 的解析结果
 #
@@ -48,7 +48,7 @@ for arg in "$@"; do
       sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
-    *) die "未知参数：$arg（用 --help 查看用法）" ;;
+    *) die "未知参数：${arg}（用 --help 查看用法）" ;;
   esac
 done
 
@@ -182,17 +182,24 @@ server_python() {
 
 ADMIN_PASSWORD="${ADMIN_INIT_PASSWORD:-}"
 if [ -z "${ADMIN_PASSWORD}" ]; then
-  # 随机生成（16 字符，字母数字），仅本次显示
+  # 随机生成 32 位十六进制密码，仅本次显示
   if command -v openssl >/dev/null 2>&1; then
-    ADMIN_PASSWORD=$(openssl rand -base64 24 | tr -dc 'A-Za-z0-9' | cut -c1-16)
+    ADMIN_PASSWORD=$(openssl rand -hex 16) || die "生成安全随机密码失败"
+    printf '%s\n' "${ADMIN_PASSWORD}" | LC_ALL=C grep -Eq '^[0-9a-f]{32}$' || die "生成的随机密码格式无效"
   else
-    ADMIN_PASSWORD=$(awk 'BEGIN{srand();s="";for(i=0;i<16;i++){s=s substr("abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789",int(rand()*56)+1,1)}print s}')
+    die "无法安全生成随机密码：请安装 openssl 或设置 ADMIN_INIT_PASSWORD"
   fi
   PASSWORD_IS_RANDOM=1
 else
   PASSWORD_IS_RANDOM=0
 fi
 [ -n "${ADMIN_PASSWORD}" ] || die "生成 admin 密码失败"
+case "${ADMIN_PASSWORD}" in
+  *'
+'*) die "admin 密码不能包含换行符" ;;
+esac
+PASSWORD_BYTES=$(printf '%s' "${ADMIN_PASSWORD}" | LC_ALL=C wc -c | tr -d ' ')
+[ "${PASSWORD_BYTES}" -le 72 ] || die "admin 密码的 UTF-8 编码不能超过 72 字节"
 
 # 优先用服务端的 hash_password（bcrypt rounds=12，与登录校验完全一致）；
 # 没有 Python 环境时回退 htpasswd（产出 $2y$，服务端 bcrypt 同样能校验）。
@@ -200,23 +207,23 @@ ADMIN_HASH=""
 PY=""
 PY=$(server_python) || PY=""
 if [ -n "${PY}" ]; then
-  ADMIN_HASH=$(cd "${SERVER_DIR}" && "${PY}" -c '
+  ADMIN_HASH=$(printf '%s' "${ADMIN_PASSWORD}" | (cd "${SERVER_DIR}" && "${PY}" -c '
 import sys
 sys.path.insert(0, ".")
 try:
     from app.utils.security import hash_password
-except Exception:
+except ImportError:
     import bcrypt
     def hash_password(p):
         return bcrypt.hashpw(p.encode(), bcrypt.gensalt(rounds=12)).decode()
-print(hash_password(sys.argv[1]))
-' "${ADMIN_PASSWORD}" 2>/dev/null) || ADMIN_HASH=""
+print(hash_password(sys.stdin.read()))
+') 2>/dev/null) || ADMIN_HASH=""
 fi
 
 if [ -z "${ADMIN_HASH}" ]; then
   if command -v htpasswd >/dev/null 2>&1; then
     warn "服务端 Python 不可用，回退到 htpasswd 生成 bcrypt 哈希"
-    ADMIN_HASH=$(htpasswd -bnBC 12 "" "${ADMIN_PASSWORD}" | tr -d ':\n')
+    ADMIN_HASH=$(printf '%s\n' "${ADMIN_PASSWORD}" | htpasswd -inBC 12 "" | tr -d ':\n')
   else
     die "无法生成 admin 密码哈希：既没有可用的 Python + bcrypt，也没有 htpasswd。
 请安装其一，或手动执行：
@@ -226,6 +233,7 @@ if [ -z "${ADMIN_HASH}" ]; then
 fi
 
 [ -n "${ADMIN_HASH}" ] || die "生成 admin 密码哈希失败"
+printf '%s\n' "${ADMIN_HASH}" | LC_ALL=C grep -Eq '^\$2[aby]\$[0-9][0-9]\$[./A-Za-z0-9]{53}$' || die "生成的 bcrypt 哈希格式无效"
 
 # --- 替换占位符并导入 ---
 info "导入建表 SQL（建表 + 积分规则 + 批改档位种子 + admin）"
@@ -240,7 +248,51 @@ TMP_SQL="$(mktemp "${TMPDIR:-/tmp}/zg_tsp_init.XXXXXX")"
 trap 'rm -f "${TMP_SQL}"' EXIT INT TERM
 sed "s|__ADMIN_BCRYPT_HASH__|${ESC_HASH}|g" "${INIT_SQL}" > "${TMP_SQL}"
 
-mysql_run "${DB_NAME}" < "${TMP_SQL}" || die "导入 SQL 失败"
+if ! mysql_run "${DB_NAME}" < "${TMP_SQL}"; then
+  if [ "${PASSWORD_IS_RANDOM}" -eq 1 ]; then
+    warn "导入可能已提交 admin 密码，以下是本次候选密码，是否生效尚未确认："
+    printf '  候选密码：   %s\n' "${ADMIN_PASSWORD}"
+  fi
+  die "导入 SQL 失败：数据库可能已部分初始化，admin 密码状态需人工核查"
+fi
+
+# 仅修复字面占位符；锁定行后判断本次哈希是否实际生效。
+# 其他密码一律保留，must_change_password 不代表本次是否设置了密码。
+ADMIN_RESULT=$(mysql_run -N -B "${DB_NAME}" <<EOF
+START TRANSACTION;
+UPDATE users SET password_hash = '${ADMIN_HASH}', must_change_password = 1
+WHERE username = 'admin' AND role = 'admin' AND status = 'active'
+  AND BINARY password_hash = BINARY CONCAT('__ADMIN_', 'BCRYPT_HASH__');
+SELECT IF(BINARY password_hash = BINARY '${ADMIN_HASH}', 'new', 'existing'), role, status, must_change_password
+FROM users WHERE username = 'admin' FOR UPDATE;
+COMMIT;
+EOF
+) || {
+  if [ "${PASSWORD_IS_RANDOM}" -eq 1 ]; then
+    warn "本次密码可能已提交，以下是候选密码，是否生效尚未确认："
+    printf '  候选密码：   %s\n' "${ADMIN_PASSWORD}"
+  fi
+  die "无法确认 admin 密码状态：数据库可能已部分初始化，请人工核查"
+}
+
+# 查询只返回预期的有限状态，避免将数据库内容直接输出。
+case "${ADMIN_RESULT}" in
+  "$(printf 'new\tadmin\tactive\t1')"|"$(printf 'new\tadmin\tactive\t0')")
+    ok "本次设置了 admin 密码（提交时状态正常）"
+    if [ "${PASSWORD_IS_RANDOM}" -eq 1 ]; then
+      printf '  初始密码：   %s   (随机生成，仅本次显示)\n' "${ADMIN_PASSWORD}"
+    else
+      info "admin 密码取自 ADMIN_INIT_PASSWORD"
+    fi
+    ;;
+  "$(printf 'existing\tadmin\tactive\t1')"|"$(printf 'existing\tadmin\tactive\t0')")
+    ok "admin 已存在，密码未被改动；本次生成或提供的密码未使用"
+    ;;
+  *) die "admin 账户缺失、角色或状态异常，或查询结果无法确认；请人工核查" ;;
+esac
+case "${ADMIN_RESULT}" in
+  *"$(printf '\t1')") warn "admin 首次登录后必须修改密码" ;;
+esac
 
 # --- 校验 ---
 # 期望值从 init.sql **动态推导**而非硬编码 —— 加表时不必改脚本，
@@ -253,7 +305,6 @@ FK_COUNT=$(mysql_run -N -e "SELECT COUNT(*) FROM information_schema.table_constr
 RULE_COUNT=$(mysql_run -N -e "SELECT COUNT(*) FROM \`${DB_NAME}\`.point_rules;" 2>/dev/null || echo 0)
 REVIEW_RULE_COUNT=$(mysql_run -N -e "SELECT COUNT(*) FROM \`${DB_NAME}\`.homework_review_rules;" 2>/dev/null || echo 0)
 ADMIN_EXISTS=$(mysql_run -N -e "SELECT COUNT(*) FROM \`${DB_NAME}\`.users WHERE username='admin';" 2>/dev/null || echo 0)
-ADMIN_MUST_CHANGE=$(mysql_run -N -e "SELECT must_change_password FROM \`${DB_NAME}\`.users WHERE username='admin';" 2>/dev/null || echo "")
 
 [ "${TABLE_COUNT}" = "${EXPECT_TABLE_COUNT}" ] || die "校验失败：期望 ${EXPECT_TABLE_COUNT} 张表，实际 ${TABLE_COUNT} 张"
 [ "${FK_COUNT}" = "0" ] || die "校验失败：期望零外键，实际 ${FK_COUNT} 个；已有库需单独迁移"
@@ -272,16 +323,6 @@ echo ""
 ok "初始化完成"
 echo ""
 echo "  管理员账号： admin"
-if [ "${PASSWORD_IS_RANDOM}" -eq 1 ]; then
-  echo "  初始密码：   ${ADMIN_PASSWORD}   ${Y}(随机生成，仅本次显示)${N}"
-else
-  echo "  初始密码：   （取自 ADMIN_INIT_PASSWORD）"
-fi
-if [ "${ADMIN_MUST_CHANGE}" = "1" ]; then
-  echo "  ${Y}首次登录后必须修改密码${N}（must_change_password=1）"
-else
-  echo "  ${Y}注意：admin 已存在，密码未被改动${N}"
-fi
 echo ""
 echo "  启动服务端： cd ${SERVER_DIR} && uvicorn app.main:app --host 0.0.0.0 --port 8000"
 echo ""

@@ -207,7 +207,10 @@ def _render_admin_seed() -> str:
         "INSERT INTO users (username, password_hash, role, nickname, total_points, status, must_change_password)\n"
         f"SELECT 'admin', '{ADMIN_HASH_PLACEHOLDER}', 'admin', '超级管理员', 0, 'active', 1\n"
         "FROM DUAL\n"
-        "WHERE NOT EXISTS (SELECT 1 FROM users WHERE username = 'admin');"
+        # 拆分对照值，避免 init.sh 的全局 sed 替换同时改写防护条件。
+        f"WHERE BINARY '{ADMIN_HASH_PLACEHOLDER}' <> BINARY CONCAT('__ADMIN_', 'BCRYPT_HASH__')\n"
+        "  AND NOT EXISTS (SELECT 1 FROM users WHERE username = 'admin')\n"
+        "ON DUPLICATE KEY UPDATE id = users.id;"
     )
 
 
@@ -226,14 +229,13 @@ def build_sql() -> str:
     )
     out.append("-- 改了 ORM 后重新执行该脚本以保持同步。")
     out.append("--")
-    out.append("-- 用法（推荐经 scripts/init.sh，它会替换 admin 密码占位符）：")
-    out.append("--     mysql --default-character-set=utf8mb4 <库名> < init.sql")
+    out.append("-- 用法：通过 scripts/init.sh 替换 admin 密码占位符并导入。")
+    out.append("-- 直接导入仅创建表和规则，不创建 admin。")
     out.append("--")
     out.append("-- 说明：")
     out.append("--   · 全部语句幂等，可重复执行")
     out.append("--   · 不创建物理外键，关联完整性由应用维护")
-    out.append(f"--   · admin 密码以占位符 {ADMIN_HASH_PLACEHOLDER} 写入，")
-    out.append("--     直接用 mysql 导入会导致 admin 无法登录，必须经 scripts/init.sh")
+    out.append("--   · 未替换密码占位符时跳过 admin；已有 admin 不会被覆盖")
     out.append("-- ============================================================================")
     out.append("")
     out.append("SET NAMES utf8mb4;")
