@@ -4,7 +4,6 @@ import { post } from './client'
 import type { PageResult } from './classes'
 import type {
   AdminUser,
-  Article,
   Child,
   ConsumeItem,
   HomeworkReviewRule,
@@ -78,9 +77,6 @@ export const userApi = {
   list: (params: { page?: number; size?: number; role?: Role; status?: string; keyword?: string } = {}) =>
     post<PageResult<AdminUser>>('/admin/users/list', params as Record<string, unknown>),
 
-  detail: (userId: number) =>
-    post<{ user: AdminUser }>('/admin/users/detail', { user_id: userId }),
-
   disable: (userId: number) =>
     post<{ user_id: number; status: string }>('/admin/users/disable', { user_id: userId }),
 
@@ -97,9 +93,6 @@ export const userApi = {
 export const ruleApi = {
   list: () => post<{ list: PointRule[]; total: number }>('/admin/rules/list'),
 
-  detail: (ruleKey: string) =>
-    post<{ rule: PointRule }>('/admin/rules/detail', { rule_key: ruleKey }),
-
   update: (params: {
     rule_key: string
     points?: number
@@ -107,23 +100,6 @@ export const ruleApi = {
     extra_config?: string | null
     enabled?: boolean
   }) => post<{ rule: PointRule }>('/admin/rules/update', params as Record<string, unknown>),
-
-  batchUpdate: (rules: Record<string, unknown>[]) =>
-    post<{ updated: PointRule[]; count: number }>('/admin/rules/batch-update', { rules }),
-}
-
-// ---------- admin：文章（PRD 5.8.4） ----------
-export const adminArticleApi = {
-  list: (
-    params: {
-      page?: number
-      size?: number
-      author_role?: Role
-      author_id?: number
-      status?: string
-      keyword?: string
-    } = {},
-  ) => post<PageResult<Article>>('/admin/articles/list', params as Record<string, unknown>),
 }
 
 // ---------- admin：统计（PRD 5.8.5） ----------

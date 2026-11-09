@@ -21,9 +21,6 @@ export interface PageResult<T> {
 export const classApi = {
   create: (name: string) => post<{ class: ClassInfo }>('/classes/create', { name }),
 
-  join: (inviteCode: string) =>
-    post<{ class: ClassInfo }>('/classes/join', { invite_code: inviteCode }),
-
   my: () => post<{ role: string; classes: ClassInfo[] }>('/classes/my'),
 
   students: (classId: number) =>

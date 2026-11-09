@@ -112,14 +112,6 @@ export const articleApi = {
   remove: (articleId: number) =>
     post<{ deleted_id: number }>('/articles/delete', { article_id: articleId }),
 
-  /** 发布文章（teacher / admin，PRD 5.5）。 */
-  create: (title: string, content: string, cover?: string) =>
-    post<{ article: Article }>('/articles/create', {
-      title,
-      content,
-      ...(cover ? { cover } : {}),
-    }),
-
   /**
    * 发布文章（支持纯文本 / PDF / word 文档）—— teacher / admin（迭代 v2.1）。
    * 有文件时走 multipart 的 /articles/create-file，服务端抽取正文入库。

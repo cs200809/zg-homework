@@ -682,9 +682,6 @@ class Repo:
         condition = TeacherInviteCode.code == code if code is not None else TeacherInviteCode.id == invite_id
         return self.db.scalar(select(TeacherInviteCode).where(condition).with_for_update().execution_options(populate_existing=True))
 
-    def list_invite_codes(self) -> list[TeacherInviteCode]:
-        return list(self.db.scalars(select(TeacherInviteCode).order_by(TeacherInviteCode.id)))
-
     def list_invite_codes_paged(
         self,
         status: str | None = None,
@@ -702,9 +699,6 @@ class Repo:
         stmt = stmt.order_by(TeacherInviteCode.id.desc()).offset((page - 1) * size).limit(size)
         return list(self.db.scalars(stmt)), total
 
-    def get_invite_by_id(self, invite_id: int) -> TeacherInviteCode | None:
-        return self.db.get(TeacherInviteCode, invite_id)
-
     # ---------------- 积分规则 ----------------
 
     def add_point_rule(self, rule: PointRule) -> PointRule:
@@ -717,8 +711,3 @@ class Repo:
 
     def list_point_rules(self) -> list[PointRule]:
         return list(self.db.scalars(select(PointRule).order_by(PointRule.id)))
-
-
-def get_repo(db: Session) -> Repo:
-    """FastAPI 依赖：构造仓储。"""
-    return Repo(db)
