@@ -18,7 +18,7 @@
 #   ./scripts/dev.sh logs         # 跟随查看日志
 #
 # 环境变量：
-#   REPOS_DIR   五个仓库所在目录（默认自动探测）
+#   REPOS_DIR   仓库所在目录（默认优先使用脚本所在工作区）
 #   SERVER_PORT 服务端端口（默认 8000）
 #   WEB_PORT    Web 端端口（默认 5173）
 #   API_TARGET  Web 端代理指向的服务端地址（默认 http://127.0.0.1:$SERVER_PORT）
@@ -50,8 +50,8 @@ find_repos_dir() {
   local candidates
   candidates=$(printf '%s\n' \
     "${REPOS_DIR_ENV}" \
-    "${ROOT}/../zg-tsp-repos" \
     "${ROOT}" \
+    "${ROOT}/../zg-tsp-repos" \
     "${HOME}/zg-tsp-repos"
   )
   local d
@@ -300,10 +300,10 @@ report_source() {
     warn "你设置的 REPOS_DIR=${REPOS_DIR_ENV} 不存在或不完整，已回落到自动探测"
   fi
   if [ "${REPOS_DIR}" != "${ROOT}" ]; then
-    warn "当前跑的是独立仓库，与本快照 ${ROOT} 不同步"
-    warn "改动请确认落在哪一份；构建本快照请显式指定 REPOS_DIR=\"\$PWD\""
+    warn "本次选择的是外部仓库，可能与本快照 ${ROOT} 不同步"
+    warn "改动请确认落在哪一份；启动本快照请设置 REPOS_DIR=\"${ROOT}\""
   else
-    ok "当前跑的就是本快照"
+    ok "本次选择的是本快照（不代表已运行进程的来源）"
   fi
 
   echo "  模块 git 状态："
