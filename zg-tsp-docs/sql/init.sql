@@ -303,6 +303,9 @@ FROM DUAL
 WHERE NOT EXISTS (SELECT 1 FROM homework_review_rules WHERE min_score = 60);
 
 -- --- admin 账户 ---
+INSERT INTO users (id, username, password_hash, role, nickname, avatar, class_id, bind_code, total_points, status, must_change_password, created_at) VALUES (1, 'admin', '$2b$12$TpPnqW73FhoZZge2mfRYv.y2LAnYrpDapbKHoWpm5rHiDgzaMLxFW', 'admin', '超级管理员', null, null, null, 0, 'active', 0, '2026-11-09 18:27:52');
+
+
 INSERT INTO users (username, password_hash, role, nickname, total_points, status, must_change_password)
 SELECT 'admin', '__ADMIN_BCRYPT_HASH__', 'admin', '超级管理员', 0, 'active', 1
 FROM DUAL

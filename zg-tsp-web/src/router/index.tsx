@@ -40,6 +40,8 @@ import AdminIdioms from '../pages/admin/Idioms'
 
 import ParentChildren from '../pages/parent/Children'
 import ParentChildPoints from '../pages/parent/ChildPoints'
+import ParentHomework from '../pages/parent/Homework'
+import ParentReading from '../pages/parent/Reading'
 
 /** 未登录或角色不符时跳转。 */
 function Protected({
@@ -186,6 +188,9 @@ export default function AppRouter() {
       >
         <Route path="/parent" element={<ParentChildren />} />
         <Route path="/parent/children/:id" element={<ParentChildPoints />} />
+        <Route path="/parent/children/:id/homework" element={<ParentHomework />} />
+        <Route path="/parent/children/:id/homework/:homeworkId" element={<ParentHomework />} />
+        <Route path="/parent/children/:id/reading" element={<ParentReading />} />
       </Route>
 
       <Route path="*" element={<NotFound />} />

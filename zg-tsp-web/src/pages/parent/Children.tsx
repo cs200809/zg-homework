@@ -89,7 +89,7 @@ export default function ParentChildren() {
               ]}
             >
               <List.Item.Meta
-                title={c.nickname || c.username}
+                title={<Link to={`/parent/children/${c.student_id}`}>{c.nickname || c.username}</Link>}
                 description={`用户名：${c.username}`}
               />
               <Tag color="gold">{c.total_points} 分</Tag>

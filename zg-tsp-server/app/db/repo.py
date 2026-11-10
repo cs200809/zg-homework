@@ -9,6 +9,7 @@ from datetime import date, datetime
 from sqlalchemy import Select, func, or_, select
 from sqlalchemy.orm import Session
 
+from app.models.constants import ROLE_STUDENT
 from app.models.entities import (
     AdminLog,
     Article,
@@ -339,21 +340,13 @@ class Repo:
             .join(Class, Class.id == Homework.class_id)
             .where(
                 Class.teacher_id == teacher_id,
+                User.role == ROLE_STUDENT,
+                User.class_id == Homework.class_id,
                 HomeworkRecord.submit_time.isnot(None),
                 HomeworkRecord.reviewed_at.is_(None),
             )
         )
-        count_stmt = (
-            select(func.count())
-            .select_from(HomeworkRecord)
-            .join(Homework, Homework.id == HomeworkRecord.homework_id)
-            .join(Class, Class.id == Homework.class_id)
-            .where(
-                Class.teacher_id == teacher_id,
-                HomeworkRecord.submit_time.isnot(None),
-                HomeworkRecord.reviewed_at.is_(None),
-            )
-        )
+        count_stmt = select(func.count()).select_from(base.subquery())
         total = self.db.scalar(count_stmt) or 0
         stmt = (
             base.order_by(HomeworkRecord.submit_time.desc())
