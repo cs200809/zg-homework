@@ -16,7 +16,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.db.repo import Repo
 from app.db.session import get_db
-from app.models.constants import POINT_TYPE_CONSUME, ROLE_PARENT
+from app.models.constants import POINT_TYPE_PARENT_REWARD, ROLE_PARENT
 from app.models.entities import ParentStudent, User
 from app.services import point_service
 from app.utils.deps import get_verified_user
@@ -30,6 +30,12 @@ CONSUME_ITEMS = [
     {"key": "tv", "name": "看电视", "points": 5},
     {"key": "toy", "name": "买玩具", "points": 20},
     {"key": "snack", "name": "买零食", "points": 10},
+]
+
+REWARD_ITEMS = [
+    {"key": "housework", "name": "主动承担家务", "points": 5},
+    {"key": "homework", "name": "积极完成作业", "points": 5},
+    {"key": "food", "name": "不挑食", "points": 3},
 ]
 
 
@@ -78,6 +84,13 @@ class ConsumeRequest(BaseModel):
     item: str = Field(..., min_length=1, max_length=50)
     points: int = Field(..., gt=0, le=10000)
     remark: str | None = Field(None, max_length=255)
+
+
+class RewardRequest(BaseModel):
+    student_id: int
+    item: str = Field(..., min_length=1, max_length=50)
+    points: int = Field(..., gt=0, le=10000)
+    remark: str | None = Field(None, max_length=204)
 
 
 class UnbindRequest(BaseModel):
@@ -225,6 +238,50 @@ def consume_points(
         "points": -req.points,
         "total_points": remaining,
     })
+
+
+@router.post("/reward")
+def reward_points(
+    req: RewardRequest,
+    parent: User = Depends(get_verified_user),
+    db: Session = Depends(get_db),
+):
+    """为已绑定的孩子按指定数额奖励积分。"""
+    _require_parent(parent)
+    remark = req.item + (f"：{req.remark}" if req.remark else "")
+    if len(remark) > 255:
+        raise _bad_request("事项和备注合计不能超过 255 个字符")
+
+    repo = Repo(db)
+    child = repo.get_user_by_id_for_update(req.student_id)
+    if not child:
+        raise _not_found("学生不存在")
+    if not repo.get_parent_student_for_update(parent.id, req.student_id):
+        raise _forbidden("只能操作自己绑定的孩子")
+
+    try:
+        point_service.award_amount(
+            db, child.id, req.points, type_=POINT_TYPE_PARENT_REWARD,
+            remark=remark, operator_id=parent.id,
+        )
+    except point_service.PointError as exc:
+        db.rollback()
+        raise _bad_request(exc.message) from exc
+
+    db.commit()
+    return ok({
+        "student_id": child.id,
+        "item": req.item,
+        "points": req.points,
+        "total_points": child.total_points,
+    })
+
+
+@router.post("/reward-items")
+async def reward_items(parent: User = Depends(get_verified_user)):
+    """预设奖励事项。"""
+    _require_parent(parent)
+    return ok({"list": REWARD_ITEMS})
 
 
 @router.post("/consume-items")

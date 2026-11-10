@@ -391,7 +391,7 @@ CREATE TABLE point_logs
 (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     student_id  INTEGER     NOT NULL,
-    type        VARCHAR(20) NOT NULL, -- checkin/homework/reading/game/consume
+    type        VARCHAR(20) NOT NULL, -- checkin/homework/reading/game/consume/review/parent_reward
     points      INTEGER     NOT NULL,
     remark      VARCHAR(255),
     operator_id INTEGER,
@@ -694,19 +694,25 @@ POST /games/records        {page, size}                  student
 
 ---
 
-### 5.7 家长端 — 积分消耗
+### 5.7 家长端 — 积分消耗与奖励
 
 - 学生生成绑定码，家长输入绑定（可绑多个）
 - 查看孩子积分与明细
 - 消耗：预设事项（看手机-5、看电视-5、买玩具-20、买零食-10、自定义）
 - 校验余额 ≥ 扣分，否则 400
 - 写 PointLog（type=consume，points 为负，operator=家长）
+- 奖励：预设主动承担家务 5 分、积极完成作业 5 分、不挑食 3 分，也可自定义事项及分值；预设仅供参考，不限制提交内容
+- 奖励仅限已绑定孩子；`points` 为 1–10000 的整数，`item` 为 1–50 字符，`remark` 可省略或为 null、最多 204 字符；流水备注为事项与非空备注以 `：` 拼接，拼接后最多 255 字符，超出返回 400
+- 奖励不读取积分规则、不设每日上限；事务中锁定学生和绑定关系，写正数流水 `type=parent_reward`、`operator_id=家长 ID` 并同步增加余额，计入今日及累计获得统计
+- 奖励成功返回统一响应 `data={student_id, item, points, total_points}`；预设接口返回 `data={list: [{key, name, points}, ...]}`。非家长或未绑定返回 403，学生不存在返回 404，参数校验失败返回 400
 
 ```
 POST /parent/bind          {bind_code}                    parent
 POST /parent/children      {}                             parent
 POST /parent/child-points  {student_id, page, size}       parent
 POST /parent/consume       {student_id, item, points, remark} parent
+POST /parent/reward        {student_id, item, points, remark?} parent
+POST /parent/reward-items  {}                             parent
 POST /parent/consume-items {}                             parent
 POST /parent/unbind        {student_id}                   parent
 ```
@@ -895,6 +901,8 @@ POST /parent/bind
 POST /parent/children
 POST /parent/child-points
 POST /parent/consume
+POST /parent/reward
+POST /parent/reward-items
 POST /parent/consume-items
 POST /parent/unbind
 

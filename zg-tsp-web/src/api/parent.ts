@@ -49,6 +49,16 @@ export const parentApi = {
 
   consumeItems: () => post<{ list: ConsumeItem[] }>('/parent/consume-items'),
 
+  reward: (studentId: number, item: string, points: number, remark?: string) =>
+    post<unknown>('/parent/reward', {
+      student_id: studentId,
+      item,
+      points,
+      ...(remark ? { remark } : {}),
+    }),
+
+  rewardItems: () => post<{ list: ConsumeItem[] }>('/parent/reward-items'),
+
   unbind: (studentId: number) =>
     post<{ unbound_student_id: number }>('/parent/unbind', { student_id: studentId }),
 }

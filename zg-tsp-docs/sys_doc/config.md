@@ -1,9 +1,16 @@
 # 配置项
 ## mysql 数据库配置
+### dev
 ```
     url: jdbc:mysql://localhost:3306/zg_tsp?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
     username: root
-    password: 12345678
+    password: 12345678 PROD: Hp@12345678
+```
+### prod
+``` 
+    url: jdbc:mysql://182.254.241.215:3306/homework_points?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
+    username: root
+    password: Hp@12345678
 ```
 ## admin 账号
 
