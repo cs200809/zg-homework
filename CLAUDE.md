@@ -19,7 +19,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 1. **Flutter 两端的 `lib/` 是物理复制的两份**，位于独立的 Android、iOS 仓库，而不是当前聚合检出。两端代码基本相同，**改任何一份都必须检查并手工同步另一份**。
 
-2. **`scripts/dev.sh` 启动的不一定是本目录的代码**。有效的 `REPOS_DIR` 优先；否则探测 `../zg-tsp-repos` → `$ROOT` → `~/zg-tsp-repos`。若命中独立仓库，其代码可能与本检出不同步；改完代码后确认运行的是哪一份。
+2. **`scripts/dev.sh` 默认优先启动本目录的代码**。有效的 `REPOS_DIR` 优先；否则探测 `$ROOT` → `../zg-tsp-repos` → `~/zg-tsp-repos`。若显式指定或回退到独立仓库，其代码可能与本检出不同步；改完代码后确认运行的是哪一份。
 
 3. **PRD 里的建表 SQL 是 SQLite 方言**，而服务端实际跑 MySQL 8。库表结构以 `zg-tsp-server/app/models/entities.py`（15 张表）为准，PRD 第 4.1 节仅作参考。
 
@@ -270,7 +270,7 @@ lib/
 - `gradle/wrapper/gradle-wrapper.properties`：`distributionUrl` 指向腾讯云镜像（官方地址 307 跳 GitHub 会超时；Gradle 本地缓存按 URL 哈希匹配，换 URL 就要重新下载）
 - `build.gradle.kts` / `settings.gradle.kts`：阿里云 Maven 镜像优先，缺失构件自动回落官方源
 
-**改动时务必确认构建的是哪份代码**：`scripts/build.sh` 与 `scripts/dev.sh` 优先使用有效的 `REPOS_DIR`，否则自动探测 `../zg-tsp-repos` → `$ROOT` → `~/zg-tsp-repos`。无效或不完整的覆盖值可能回退自动探测；检查脚本输出。当前聚合检出没有移动端，不能直接构建本快照的移动端。
+**改动时务必确认使用的是哪份代码**：`scripts/build.sh` 与 `scripts/dev.sh` 优先使用有效的 `REPOS_DIR`；否则 `build.sh` 探测 `../zg-tsp-repos` → `$ROOT` → `~/zg-tsp-repos`，`dev.sh` 则优先 `$ROOT`，再探测 `../zg-tsp-repos` → `~/zg-tsp-repos`。`init.sh` 的默认探测顺序与 `build.sh` 相同，初始化前确认来源。无效或不完整的覆盖值可能回退自动探测；检查脚本输出。当前聚合检出没有移动端，不能直接构建本快照的移动端。
 
 `scripts/dev.sh` 现在会在启动前打印「代码来源与新鲜度报告」（REPOS_DIR 命中哪份代码、五模块 git 状态、与本快照的差异条目数），用它确认跑的是哪一份。
 

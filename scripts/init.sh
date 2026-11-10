@@ -9,7 +9,7 @@
 #   ./scripts/init.sh --help
 #
 # 环境变量：
-#   REPOS_DIR            五个仓库所在目录（默认自动探测，同 dev.sh）
+#   REPOS_DIR            仓库所在目录（默认自动探测，顺序与 dev.sh 不同）
 #   ADMIN_INIT_PASSWORD  新建或修复占位符账号的密码（不会重置已有正常密码）
 #   MYSQL_HOST/MYSQL_PORT/MYSQL_USER/MYSQL_PASSWORD/MYSQL_DATABASE
 #                        覆盖 .env 中 DATABASE_URL 的解析结果
@@ -53,7 +53,8 @@ for arg in "$@"; do
 done
 
 # --- 定位仓库目录 ---
-# 与 dev.sh 的探测顺序保持一致：环境变量 → ../zg-tsp-repos → 本快照 → ~/zg-tsp-repos
+# 初始化脚本探测顺序：环境变量 → ../zg-tsp-repos → 本快照 → ~/zg-tsp-repos
+# 与 dev.sh 默认顺序不同；使用前须确认 SQL 和数据库来源。
 REPOS_DIR_ENV="${REPOS_DIR:-}"
 REPOS_DIR=""
 find_repos_dir() {
