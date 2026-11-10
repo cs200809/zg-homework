@@ -10,7 +10,13 @@
 """
 
 import logging
+import secrets
 from datetime import datetime
+from pathlib import Path
+
+from fastapi.responses import FileResponse
+
+from app.config import BASE_DIR, settings
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
@@ -27,6 +33,7 @@ from app.models.constants import (
     POINT_TYPE_REVIEW,
     ROLE_STUDENT,
     ROLE_TEACHER,
+    ROLE_PARENT,
 )
 from app.models.entities import Homework, HomeworkRecord, User
 from app.utils.deps import get_verified_user
@@ -82,7 +89,7 @@ def _record_to_dict(r: HomeworkRecord) -> dict:
         "submit_time": r.submit_time.isoformat() if r.submit_time else None,
         "duration_minutes": r.duration_minutes,
         "status": r.status,
-        "file_url": r.file_url,
+        "file_url": "/homework/attachment" if r.file_url and r.file_url.startswith("private:") else r.file_url,
         "text_content": r.text_content,
         "points": r.points,
         # 用时 <1 分钟标记异常，待老师审核（PRD 5.3）
@@ -262,6 +269,9 @@ async def homework_detail(
         if hw.class_id != user.class_id:
             raise _forbidden("不能查看其他班级的作业")
 
+    else:
+        raise _forbidden("仅老师或学生可查看作业")
+
     data = _homework_to_dict(hw)
     if user.role == ROLE_STUDENT:
         record = repo.get_homework_record(hw.id, user.id)
@@ -284,7 +294,7 @@ async def homework_records(
         raise _not_found("作业不存在")
     _own_class_or_403(db, teacher, hw.class_id)
 
-    students = repo.list_students_in_class(hw.class_id)
+    students = [s for s in repo.list_students_in_class(hw.class_id) if s.role == ROLE_STUDENT]
     records = {r.student_id: r for r in repo.list_homework_records(hw.id)}
 
     rows = []
@@ -302,7 +312,7 @@ async def homework_records(
                 "start_time": rec.start_time.isoformat() if rec.start_time else None,
                 "submit_time": rec.submit_time.isoformat() if rec.submit_time else None,
                 "duration_minutes": rec.duration_minutes,
-                "file_url": rec.file_url,
+                "file_url": _record_to_dict(rec)["file_url"],
                 "text_content": rec.text_content,
                 "suspicious": bool(
                     rec.duration_minutes is not None
@@ -313,7 +323,10 @@ async def homework_records(
             })
         rows.append(row)
 
-    submitted = repo.count_submitted_records(hw.id)
+    submitted = sum(
+        1 for student in students
+        if (record := records.get(student.id)) is not None and record.submit_time is not None
+    )
     return ok({
         "homework": _homework_to_dict(hw),
         "records": rows,
@@ -343,6 +356,10 @@ async def review_homework(
 
     # 行锁：防止两个老师同时批改同一份导致积分重复发放
     record = repo.get_homework_record_for_update(req.homework_id, req.student_id)
+    # 与提交操作保持 homework -> record -> student 锁序，锁定后校验当前班级。
+    student = repo.get_user_by_id_for_update(req.student_id)
+    if not student or student.role != ROLE_STUDENT or student.class_id != hw.class_id:
+        raise _forbidden("只能批改本班学生的作业")
     # 无记录 = 学生从未开始（未提交）；有记录但未提交时间同样不可批改。
     # 两种情况对老师是同一件事，统一报「尚未提交」。
     if record is None or record.submit_time is None:
@@ -413,6 +430,9 @@ async def pending_reviews(
     _require_teacher(teacher)
 
     rows, total = Repo(db).list_pending_reviews(teacher.id, req.page, req.size)
+    for row in rows:
+        if row.get("file_url", "") and row["file_url"].startswith("private:"):
+            row["file_url"] = "/homework/attachment"
     return ok({
         "list": rows,
         "total": total,
@@ -500,8 +520,14 @@ async def submit_homework(
     - 按状态读规则发放积分（PRD 4.2）
     """
     _require_student(student)
+    return await _submit_homework(homework_id, text_content, file, student, db)
 
-    if not text_content and not file:
+
+async def _submit_homework(
+    homework_id: int, text_content: str | None, file: UploadFile | None,
+    student: User, db: Session, parent: User | None = None,
+):
+    if not text_content and not (file and file.filename):
         raise _bad_request("请填写内容或上传文件")
 
     repo = Repo(db)
@@ -510,19 +536,20 @@ async def submit_homework(
     # 与并发请求的行锁等待互相等待，单 worker 下会挂死整个服务。
     saved_url = None
     if file is not None and file.filename:
-        saved_url = await _save_upload(file)
+        saved_url = await _save_private_upload(file) if parent else await _save_upload(file)
 
     try:
         hw = repo.get_homework_for_update(homework_id)
         if not hw:
             raise _not_found("作业不存在")
-        if hw.class_id != student.class_id:
-            raise _forbidden("不能操作其他班级的作业")
-
         # 保持作业父行 -> 记录 -> 学生顺序；新记录插入前锁学生，
         # 避免先取得 users 外键共享锁再升级为排他锁。
         record = repo.get_homework_record_for_update(hw.id, student.id)
         student = repo.get_user_by_id_for_update(student.id)
+        if not student or student.role != ROLE_STUDENT or hw.class_id != student.class_id:
+            raise _forbidden("不能操作其他班级的作业")
+        if parent and not repo.get_parent_student_for_update(parent.id, student.id):
+            raise _forbidden("只能操作自己绑定的孩子")
         if record and record.submit_time is not None:
             raise _bad_request("已提交，不可重复提交")
 
@@ -557,7 +584,7 @@ async def submit_homework(
             POINT_TYPE_HOMEWORK,
             rule_key,
             remark=f"作业：{hw.title}",
-            operator_id=student.id,
+            operator_id=parent.id if parent else student.id,
             # 作业无次数日上限概念，按规则表发放
             enforce_limit=True,
         )
@@ -570,12 +597,86 @@ async def submit_homework(
             from app.config import settings
 
             try:
-                (Path(settings.upload_dir) / Path(saved_url).name).unlink(missing_ok=True)
+                directory = _private_dir() if saved_url.startswith("private:") else Path(settings.upload_dir)
+                (directory / Path(saved_url.split(":", 1)[-1]).name).unlink(missing_ok=True)
             except OSError:
                 # 清理失败不应掩盖原始异常
                 logging.getLogger(__name__).warning("清理上传文件失败：%s", saved_url)
         raise
     return ok({"record": _record_to_dict(record)})
+
+
+def _private_dir() -> Path:
+    directory = (BASE_DIR / "private_homework").resolve()
+    public = Path(settings.upload_dir).resolve()
+    if directory == public or public in directory.parents:
+        raise RuntimeError("私有作业目录不能位于公开上传目录内")
+    return directory
+
+
+async def _save_private_upload(file: UploadFile) -> str:
+    suffix = Path(file.filename or "").suffix.lower().lstrip(".")
+    if suffix not in settings.allowed_extension_list:
+        raise _bad_request("不支持的文件类型")
+    data = await file.read(settings.max_upload_mb * 1024 * 1024 + 1)
+    if len(data) > settings.max_upload_mb * 1024 * 1024:
+        raise _bad_request(f"文件超过 {settings.max_upload_mb}MB 限制")
+    directory = _private_dir()
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    name = f"{secrets.token_hex(24)}.{suffix}"
+    path = directory / name
+    with path.open("xb") as output:
+        output.write(data)
+    return f"private:{name}"
+
+
+class AttachmentRequest(BaseModel):
+    homework_id: int
+    student_id: int
+
+
+@router.post("/attachment")
+def download_attachment(
+    req: AttachmentRequest,
+    user: User = Depends(get_verified_user),
+    db: Session = Depends(get_db),
+):
+    repo = Repo(db)
+    hw = repo.get_homework_by_id(req.homework_id)
+    student = repo.get_user_by_id(req.student_id)
+    if not hw or not student:
+        raise _not_found("作业或学生不存在")
+    if student.role != ROLE_STUDENT or student.class_id != hw.class_id:
+        raise _forbidden("不能查看其他班级的作业")
+    if user.role == ROLE_STUDENT:
+        if user.id != student.id:
+            raise _forbidden("只能查看自己的附件")
+    elif user.role == ROLE_PARENT:
+        if not repo.get_parent_student(user.id, student.id):
+            raise _forbidden("只能查看自己绑定孩子的附件")
+    elif user.role == ROLE_TEACHER:
+        _own_class_or_403(db, user, hw.class_id)
+    else:
+        raise _forbidden("无权查看附件")
+    record = repo.get_homework_record(hw.id, student.id)
+    if not record or not record.file_url:
+        raise _not_found("附件不存在")
+    value = record.file_url
+    if value.startswith("private:"):
+        name = value.removeprefix("private:")
+        directory = _private_dir()
+    elif value.startswith("/uploads/"):
+        name = value.removeprefix("/uploads/")
+        directory = Path(settings.upload_dir).resolve()
+    else:
+        raise _not_found("附件不可用")
+    if not name or Path(name).name != name:
+        raise _not_found("附件不可用")
+    path = (directory / name).resolve()
+    if path.parent != directory or not path.is_file():
+        raise _not_found("附件不存在")
+    return FileResponse(path, media_type="application/octet-stream", filename=name,
+                        headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"})
 
 
 async def _save_upload(file: UploadFile) -> str:

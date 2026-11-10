@@ -14,9 +14,11 @@
 
 import secrets
 from datetime import date, datetime, timedelta
+from io import BytesIO
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -28,6 +30,7 @@ from app.models.constants import (
     ARTICLE_PUBLISHED,
     POINT_TYPE_READING,
     ROLE_ADMIN,
+    ROLE_PARENT,
     ROLE_STUDENT,
     ROLE_TEACHER,
 )
@@ -37,7 +40,9 @@ from app.utils.deps import get_verified_user
 from app.utils.response import CODE_BAD_REQUEST, CODE_FORBIDDEN, CODE_NOT_FOUND, ok
 from app.utils.upload import save_bytes
 
-router = APIRouter(prefix="/articles", tags=["阅读"])
+router = APIRouter()
+article_router = APIRouter(prefix="/articles", tags=["阅读"])
+parent_articles_router = APIRouter(prefix="/parent/articles", tags=["家长阅读"])
 
 # 心跳间隔：期望 30 秒，允许 ±10 秒浮动（PRD 5.5）
 HEARTBEAT_INTERVAL = 30
@@ -99,6 +104,24 @@ class ArticleDetailRequest(BaseModel):
     article_id: int
 
 
+class ParentArticleListRequest(ArticleListRequest):
+    student_id: int
+
+
+class ParentArticleDetailRequest(ArticleDetailRequest):
+    student_id: int
+
+
+def _require_bound_student(repo: Repo, user: User, student_id: int) -> None:
+    if user.role != ROLE_PARENT:
+        raise _forbidden("仅家长可使用此接口")
+    if not repo.get_parent_student(user.id, student_id):
+        raise _forbidden("只能操作自己绑定的孩子")
+    child = repo.get_user_by_id(student_id)
+    if not child or child.role != ROLE_STUDENT:
+        raise _not_found("学生不存在")
+
+
 class HeartbeatRequest(BaseModel):
     article_id: int
     seconds: int = Field(..., ge=0, le=300)  # 本次心跳累计的阅读秒数
@@ -111,7 +134,7 @@ class ArticleIdRequest(BaseModel):
 # ---------------- 接口 ----------------
 
 
-@router.post("/create")
+@article_router.post("/create")
 async def create_article(
     req: ArticleCreateRequest,
     user: User = Depends(get_verified_user),
@@ -135,7 +158,7 @@ async def create_article(
     return ok({"article": _article_to_dict(art)})
 
 
-@router.post("/create-file")
+@article_router.post("/create-file")
 async def create_article_file(
     title: str = Form(...),
     cover: str | None = Form(None),
@@ -206,14 +229,14 @@ async def create_article_file(
     return ok({"article": _article_to_dict(art)})
 
 
-@router.post("/list")
+@article_router.post("/list")
 async def list_articles(
     req: ArticleListRequest,
     user: User = Depends(get_verified_user),
     db: Session = Depends(get_db),
 ):
     """文章列表 —— 学生端仅见 published（PRD 5.5、5.8.4）。"""
-    status = ARTICLE_PUBLISHED if user.role == ROLE_STUDENT else None
+    status = ARTICLE_PUBLISHED if user.role in (ROLE_STUDENT, ROLE_PARENT) else None
     items, total = Repo(db).list_articles_paged(
         status=status, page=req.page, size=req.size
     )
@@ -226,7 +249,7 @@ async def list_articles(
     })
 
 
-@router.post("/detail")
+@article_router.post("/detail")
 async def article_detail(
     req: ArticleDetailRequest,
     user: User = Depends(get_verified_user),
@@ -237,7 +260,7 @@ async def article_detail(
     if not art:
         raise _not_found("文章不存在")
 
-    if user.role == ROLE_STUDENT and art.status != ARTICLE_PUBLISHED:
+    if user.role in (ROLE_STUDENT, ROLE_PARENT) and art.status != ARTICLE_PUBLISHED:
         raise _not_found("文章不存在")
 
     data = _article_to_dict(art)
@@ -251,7 +274,7 @@ async def article_detail(
     return ok({"article": data})
 
 
-@router.post("/heartbeat")
+@article_router.post("/heartbeat")
 def heartbeat(
     req: HeartbeatRequest,
     student: User = Depends(get_verified_user),
@@ -377,7 +400,7 @@ def _award_reading_points(
     ) or want
 
 
-@router.post("/finish")
+@article_router.post("/finish")
 def finish_reading(
     req: ArticleIdRequest,
     student: User = Depends(get_verified_user),
@@ -440,7 +463,7 @@ def finish_reading(
     })
 
 
-@router.post("/records")
+@article_router.post("/records")
 async def article_records(
     req: ArticleIdRequest,
     teacher: User = Depends(get_verified_user),
@@ -477,7 +500,7 @@ async def article_records(
     })
 
 
-@router.post("/delete")
+@article_router.post("/delete")
 def delete_article(
     req: ArticleIdRequest,
     user: User = Depends(get_verified_user),
@@ -499,7 +522,7 @@ def delete_article(
     return ok({"deleted_id": req.article_id})
 
 
-@router.post("/export-pdf")
+@article_router.post("/export-pdf")
 def export_article_pdf(
     req: ArticleIdRequest,
     user: User = Depends(get_verified_user),
@@ -531,3 +554,65 @@ def export_article_pdf(
         "file_name": f"{art.title}.pdf",
         "size_bytes": len(pdf_bytes),
     })
+
+
+@parent_articles_router.post("/list")
+def parent_list_articles(
+    req: ParentArticleListRequest,
+    user: User = Depends(get_verified_user),
+    db: Session = Depends(get_db),
+):
+    repo = Repo(db)
+    _require_bound_student(repo, user, req.student_id)
+    items, total = repo.list_articles_paged(
+        status=ARTICLE_PUBLISHED, page=req.page, size=req.size
+    )
+    return ok({
+        "list": [_article_to_dict(a, with_content=False) for a in items],
+        "total": total,
+        "page": req.page,
+        "size": req.size,
+    })
+
+
+@parent_articles_router.post("/detail")
+def parent_article_detail(
+    req: ParentArticleDetailRequest,
+    user: User = Depends(get_verified_user),
+    db: Session = Depends(get_db),
+):
+    repo = Repo(db)
+    _require_bound_student(repo, user, req.student_id)
+    art = repo.get_article_by_id(req.article_id)
+    if not art or art.status != ARTICLE_PUBLISHED:
+        raise _not_found("文章不存在")
+    return ok({"article": _article_to_dict(art)})
+
+
+@parent_articles_router.post("/download", response_class=StreamingResponse)
+def parent_download_article(
+    req: ParentArticleDetailRequest,
+    user: User = Depends(get_verified_user),
+    db: Session = Depends(get_db),
+):
+    """家长下载已发布文章，PDF 仅在内存中生成。"""
+    repo = Repo(db)
+    _require_bound_student(repo, user, req.student_id)
+    art = repo.get_article_by_id(req.article_id)
+    if not art or art.status != ARTICLE_PUBLISHED:
+        raise _not_found("文章不存在")
+
+    pdf_bytes = document_service.render_text_to_pdf(art.title, art.content)
+    return StreamingResponse(
+        BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="article-{art.id}.pdf"',
+            "Cache-Control": "no-store",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
+router.include_router(article_router)
+router.include_router(parent_articles_router)

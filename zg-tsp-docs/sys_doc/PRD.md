@@ -1180,3 +1180,35 @@ POST /health
   本文档（第 7 节接口清单）即为契约基线，各仓库以其为准。
 - **决策 8 衍生**：不引入监控依赖，`/health` 返回静态 `status`，不探测数据库连通性。
 
+---
+
+## 14. 补充需求：家长作业、文章与鉴权文件访问
+
+本节为新增待实现需求及接口契约，不表示现有服务端已实现；与前文冲突时以本节为准，原有 `/uploads` 行为及其风险不因此消失。
+
+- 家长可选择已绑定的孩子，查看该孩子**当前班级**的作业列表、详情及其提交和批改情况；无班级时列表为空，不得查看转出班级的作业。服务端对每次请求校验家长身份、当前绑定关系及孩子当前班级，拒绝越权访问。
+- 家长可为已绑定孩子拍照并代为正式提交作业，提交到该孩子的正式作业记录，而非草稿；沿用学生提交的内容、附件、截止时间、迟交、重复提交、积分与批改等规则。不得代替孩子调用开始作业或伪造 `start_time`；已有真实开始时间时予以保留，无真实开始时间时保持为空，用时不得虚构。
+- 家长可只读查看已发布文章及下载其 PDF；不发阅读心跳、不标记读完、不创建或修改孩子的阅读计时及积分记录。隐藏或下架文章不可通过家长接口查看或下载。
+- 下列新增接口均为 `POST`，请求使用 `Authorization: Bearer <token>`；标识符放在 Body 中。普通业务接口返回统一 JSON 响应，文件下载成功返回对应文件的二进制流，失败返回统一错误响应。家长接口逐次校验身份及必要的数据访问权限；文件接口不得根据客户端提供的任意路径直接读取文件。
+
+```
+POST /parent/homework/list      {student_id, page?, size?}              parent，当前班级作业
+POST /parent/homework/detail    {student_id, homework_id}               parent
+POST /parent/homework/submit    multipart: student_id, homework_id, text_content?, file?  parent
+POST /parent/homework/download  {student_id, homework_id}               parent，下载该孩子作业附件
+POST /homework/attachment       {homework_id, student_id?}               按调用者角色及作业记录权限鉴权，下载附件
+POST /parent/articles/list      {page?, size?}                          parent，仅已发布
+POST /parent/articles/detail    {article_id}                            parent，仅已发布
+POST /parent/articles/download  {article_id}                            parent，仅已发布，PDF 二进制流
+```
+
+- 新流程的 PDF 和作业附件均使用上述 Bearer 鉴权的 POST 二进制流，不通过公开 URL 下载；服务端在返回文件前校验资源状态及访问权限。
+- **历史风险**：现存 `GET /uploads/<name>` 静态挂载不鉴权，历史公开链接仍可被持有者访问；新增鉴权接口并不撤销这些链接或自动保护已有文件，需另行治理存量文件与公开访问。
+
+**补充验收**
+
+- [ ] 家长只能查看及提交已绑定孩子当前班级的作业；解绑、转班后旧权限不再生效，越权请求被拒绝。
+- [ ] 代拍附件真实进入正式提交；按时/迟交、重复提交、积分及批改与学生提交规则一致；有真实开始时间则保留，无开始时间不伪造时间和用时。
+- [ ] 家长只能查看、下载已发布文章，阅读及下载不产生阅读记录、计时或积分。
+- [ ] PDF 和附件经 Bearer 鉴权 POST 返回二进制流；未认证、无权限及不可用资源不返回文件；历史 `/uploads` 公开链接风险已明确记录。
+

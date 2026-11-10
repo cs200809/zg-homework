@@ -18,7 +18,7 @@ import {
   Tag,
 } from 'antd'
 import { MinusCircleOutlined, PlusCircleOutlined } from '@ant-design/icons'
-import { useParams } from 'react-router-dom'
+import { Link, useParams } from 'react-router-dom'
 
 import { parentApi } from '../../api/parent'
 import type { ConsumeItem, PointLog } from '../../api/types'
@@ -171,6 +171,11 @@ export default function ParentChildPoints() {
             <Statistic title="累计消费" value={summary?.total_consumed ?? 0} suffix="分" />
           </Col>
         </Row>
+      </Card>
+
+      <Card title="学习情况" style={{ marginTop: 16 }}>
+        <Link to={`/parent/children/${id}/homework`} style={{ marginRight: 16 }}>作业</Link>
+        <Link to={`/parent/children/${id}/reading`}>阅读</Link>
       </Card>
 
       <Card title="快速消耗" style={{ marginTop: 16 }}>

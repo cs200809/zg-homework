@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { App, Descriptions, Input, InputNumber, Modal, Space, Typography } from 'antd'
 
-import { fileUrl } from '../api/client'
+import HomeworkAttachment from './HomeworkAttachment'
 import { homeworkApi } from '../api/classes'
 
 interface Props {
@@ -86,9 +86,9 @@ export default function ReviewModal({
         </Descriptions.Item>
         {answerFileUrl && (
           <Descriptions.Item label="附件">
-            <a href={fileUrl(answerFileUrl)} target="_blank" rel="noreferrer">
+            <HomeworkAttachment url={answerFileUrl} studentId={studentId} homeworkId={homeworkId}>
               查看上传文件
-            </a>
+            </HomeworkAttachment>
           </Descriptions.Item>
         )}
       </Descriptions>
