@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import {
   App,
+  AutoComplete,
   Button,
   Card,
   Col,
@@ -16,7 +17,7 @@ import {
   Table,
   Tag,
 } from 'antd'
-import { MinusCircleOutlined } from '@ant-design/icons'
+import { MinusCircleOutlined, PlusCircleOutlined } from '@ant-design/icons'
 import { useParams } from 'react-router-dom'
 
 import { parentApi } from '../../api/parent'
@@ -28,6 +29,7 @@ const TYPE_LABEL: Record<string, string> = {
   reading: '阅读',
   game: '游戏',
   consume: '消费',
+  parent_reward: '家长奖励',
 }
 
 export default function ParentChildPoints() {
@@ -35,6 +37,10 @@ export default function ParentChildPoints() {
   const studentId = Number(id)
   const { message } = App.useApp()
   const [form] = Form.useForm()
+  const [rewardForm] = Form.useForm()
+  const [rewardItems, setRewardItems] = useState<ConsumeItem[]>([])
+  const [rewarding, setRewarding] = useState(false)
+  const [submittingReward, setSubmittingReward] = useState(false)
 
   const [student, setStudent] = useState<{
     id: number
@@ -85,6 +91,35 @@ export default function ParentChildPoints() {
     })()
   }, [])
 
+  useEffect(() => {
+    parentApi.rewardItems().then((r) => setRewardItems(r.list)).catch(() => {
+      // 预设加载失败时仍可自定义奖励
+    })
+  }, [])
+
+  function openReward(preset?: ConsumeItem) {
+    rewardForm.resetFields()
+    rewardForm.setFieldsValue({ item: preset?.name, points: preset?.points })
+    setRewarding(true)
+  }
+
+  async function onReward(values: { item: string; points: number; remark?: string }) {
+    if (submittingReward) return
+    setSubmittingReward(true)
+    try {
+      await parentApi.reward(studentId, values.item.trim(), values.points, values.remark?.trim())
+      message.success('奖励积分成功')
+      setRewarding(false)
+      rewardForm.resetFields()
+      if (page === 1) await load()
+      else setPage(1)
+    } catch (e) {
+      message.error(e instanceof Error ? e.message : '奖励积分失败')
+    } finally {
+      setSubmittingReward(false)
+    }
+  }
+
   function openConsume(preset?: ConsumeItem) {
     form.setFieldsValue({
       item: preset?.name,
@@ -112,14 +147,14 @@ export default function ParentChildPoints() {
         title={student ? `${student.nickname || '孩子'} 的积分` : '孩子积分'}
         loading={loading}
         extra={
-          <Button
-            type="primary"
-            danger
-            icon={<MinusCircleOutlined />}
-            onClick={() => openConsume()}
-          >
-            积分消耗
-          </Button>
+          <>
+            <Button icon={<PlusCircleOutlined />} onClick={() => openReward()} style={{ marginRight: 8 }}>
+              奖励积分
+            </Button>
+            <Button type="primary" danger icon={<MinusCircleOutlined />} onClick={() => openConsume()}>
+              积分消耗
+            </Button>
+          </>
         }
       >
         <Row gutter={16}>
@@ -150,6 +185,16 @@ export default function ParentChildPoints() {
             {it.name} -{it.points}
           </Button>
         ))}
+      </Card>
+
+      <Card title="快速奖励" style={{ marginTop: 16 }}>
+        <span style={{ marginRight: 8 }}>预设事项：</span>
+        {rewardItems.map((it) => (
+          <Button key={it.key} onClick={() => openReward(it)} style={{ marginRight: 8 }}>
+            {it.name} +{it.points}
+          </Button>
+        ))}
+        {rewardItems.length === 0 && <span>暂无预设，可使用奖励积分自定义事项</span>}
       </Card>
 
       <Card title="积分明细" style={{ marginTop: 16 }}>
@@ -193,6 +238,72 @@ export default function ParentChildPoints() {
           ]}
         />
       </Card>
+
+      <Modal
+        title="奖励积分"
+        open={rewarding}
+        onCancel={() => setRewarding(false)}
+        onOk={() => rewardForm.submit()}
+        okText="确认奖励"
+        cancelText="取消"
+        confirmLoading={submittingReward}
+        maskClosable={!submittingReward}
+        keyboard={!submittingReward}
+        cancelButtonProps={{ disabled: submittingReward }}
+        closable={!submittingReward}
+      >
+        <Form form={rewardForm} layout="vertical" onFinish={onReward}>
+          <Form.Item
+            name="item"
+            label="事项"
+            rules={[
+              { required: true, whitespace: true, message: '请输入事项' },
+              { max: 50, message: '事项不能超过 50 个字符' },
+            ]}
+          >
+            <AutoComplete
+              options={rewardItems.map((i) => ({ value: i.name, label: `${i.name} (+${i.points})` }))}
+              placeholder="选择预设事项，或输入自定义事项"
+              filterOption={(input, option) =>
+                String(option?.value ?? '').toLowerCase().includes(input.toLowerCase())
+              }
+              onSelect={(value) => {
+                const item = rewardItems.find((i) => i.name === value)
+                if (item) rewardForm.setFieldValue('points', item.points)
+              }}
+            >
+              <Input maxLength={50} />
+            </AutoComplete>
+          </Form.Item>
+          <Form.Item
+            name="points"
+            label="奖励分数"
+            rules={[
+              { required: true, message: '请输入奖励分数' },
+              { type: 'number', min: 1, max: 10000, message: '请输入 1 至 10000 的整数' },
+              { validator: (_, value) => value == null || Number.isInteger(value) ? Promise.resolve() : Promise.reject(new Error('请输入整数')) },
+            ]}
+          >
+            <InputNumber min={1} max={10000} precision={0} style={{ width: '100%' }} />
+          </Form.Item>
+          <Form.Item
+            name="remark"
+            label="备注（选填）"
+            dependencies={['item']}
+            rules={[({ getFieldValue }) => ({
+              validator(_, value: string | undefined) {
+                const item = String(getFieldValue('item') || '').trim()
+                const remark = value?.trim() || ''
+                return item.length + (remark ? 1 + remark.length : 0) <= 255
+                  ? Promise.resolve()
+                  : Promise.reject(new Error('事项和备注合计不能超过 255 个字符'))
+              },
+            })]}
+          >
+            <Input placeholder="填写奖励备注" maxLength={255} />
+          </Form.Item>
+        </Form>
+      </Modal>
 
       <Modal
         title="积分消耗"

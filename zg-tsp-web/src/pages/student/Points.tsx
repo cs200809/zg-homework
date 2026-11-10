@@ -13,6 +13,7 @@ const TYPE_LABEL: Record<PointType, string> = {
   game: '游戏',
   consume: '消费',
   review: '作业批改',
+  parent_reward: '家长奖励',
 }
 
 const TYPE_COLOR: Record<PointType, string> = {
@@ -22,6 +23,7 @@ const TYPE_COLOR: Record<PointType, string> = {
   game: 'orange',
   consume: 'red',
   review: 'cyan',
+  parent_reward: 'green',
 }
 
 export default function StudentPoints() {

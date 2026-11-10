@@ -86,7 +86,7 @@ RELATIONS = (
     # 操作人：先按全量统计存在性（覆盖所有流水类型），再按类型核对角色。
     # 各类型的操作人语义（见各 router 的 operator_id=）：
     #   checkin / homework / reading / game → 学生本人
-    #   review（批改）→ 老师；consume（家长扣分）→ 家长
+    #   review（批改）→ 老师；consume / parent_reward → 家长
     # type 是普通列而非多态分派列，故用 extra_where 而非 discriminator。
     _r('point_logs', 'operator_id', 'users', True),
     _r('point_logs', 'operator_id', 'users', True, ('student',),
@@ -101,6 +101,8 @@ RELATIONS = (
        extra_where=(('type', 'review'),), role_only=True),
     _r('point_logs', 'operator_id', 'users', True, ('parent',),
        extra_where=(('type', 'consume'),), role_only=True),
+    _r('point_logs', 'operator_id', 'users', True, ('parent',),
+       extra_where=(('type', 'parent_reward'),), role_only=True),
     _r('parent_students', 'parent_id', 'users', roles=('parent',)),
     _r('parent_students', 'student_id', 'users', roles=('student',)),
     _r('point_rules', 'updated_by', 'users', True, ('admin',)),

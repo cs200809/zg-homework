@@ -171,7 +171,7 @@ export interface ArticleStats {
 }
 
 // ---------- 积分 ----------
-export type PointType = 'checkin' | 'homework' | 'reading' | 'game' | 'consume' | 'review'
+export type PointType = 'checkin' | 'homework' | 'reading' | 'game' | 'consume' | 'review' | 'parent_reward'
 
 export interface PointLog {
   id: number
