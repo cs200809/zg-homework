@@ -112,8 +112,8 @@ REPOS_DIR="$PWD/../zg-tsp-repos" ./scripts/build.sh ios dev       # → IPA
 服务端与 Web 端各有一个打包脚本，产出可直接上传到云服务器解压安装的 tar.gz：
 
 ```bash
-cd zg-tsp-server && ./scripts/package.sh    # → dist/zg-tsp-server-<ver>.tar.gz
-cd zg-tsp-web    && ./scripts/package.sh    # → dist/zg-tsp-web-<ver>.tar.gz
+cd zg-tsp-server && ./scripts/web_package.sh    # → dist/zg-tsp-server-<ver>.tar.gz
+cd zg-tsp-web    && ./scripts/web_package.sh    # → dist/zg-tsp-web-<ver>.tar.gz
 ```
 
 产物默认写到**仓库根的 `dist/`**（`BUILD_OUTPUT_DIR` 可覆盖；`VERSION` 覆盖版本号）。
