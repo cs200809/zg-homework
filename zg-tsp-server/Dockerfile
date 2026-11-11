@@ -1,6 +1,6 @@
 # ===== zg-tsp-server 镜像 =====
 # 构建：docker build -t zg-tsp-server:1.0.0 .
-# 运行：docker run -d -p 8000:8000 --env-file .env zg-tsp-server:1.0.0
+# 运行及持久化挂卷说明见 README.md。
 
 FROM python:3.12-slim
 

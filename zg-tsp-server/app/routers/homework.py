@@ -16,7 +16,7 @@ from pathlib import Path
 
 from fastapi.responses import FileResponse
 
-from app.config import BASE_DIR, settings
+from app.config import settings
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
@@ -536,8 +536,9 @@ async def _submit_homework(
     # 与并发请求的行锁等待互相等待，单 worker 下会挂死整个服务。
     saved_url = None
     if file is not None and file.filename:
-        saved_url = await _save_private_upload(file) if parent else await _save_upload(file)
+        saved_url = await _save_private_upload(file)
 
+    commit_started = False
     try:
         hw = repo.get_homework_for_update(homework_id)
         if not hw:
@@ -589,16 +590,17 @@ async def _submit_homework(
             enforce_limit=True,
         )
 
+        # 一旦调用 commit，异常也可能代表数据库已提交但确认响应丢失。
+        commit_started = True
         db.commit()
     except BaseException:
-        db.rollback()
-        if saved_url is not None:
-            from pathlib import Path
-            from app.config import settings
-
+        try:
+            db.rollback()
+        except Exception:
+            logging.getLogger(__name__).exception("回滚作业提交失败")
+        if saved_url is not None and not commit_started:
             try:
-                directory = _private_dir() if saved_url.startswith("private:") else Path(settings.upload_dir)
-                (directory / Path(saved_url.split(":", 1)[-1]).name).unlink(missing_ok=True)
+                (_private_dir() / saved_url.removeprefix("private:")).unlink(missing_ok=True)
             except OSError:
                 # 清理失败不应掩盖原始异常
                 logging.getLogger(__name__).warning("清理上传文件失败：%s", saved_url)
@@ -607,7 +609,7 @@ async def _submit_homework(
 
 
 def _private_dir() -> Path:
-    directory = (BASE_DIR / "private_homework").resolve()
+    directory = Path(settings.private_homework_dir).resolve()
     public = Path(settings.upload_dir).resolve()
     if directory == public or public in directory.parents:
         raise RuntimeError("私有作业目录不能位于公开上传目录内")
@@ -625,8 +627,17 @@ async def _save_private_upload(file: UploadFile) -> str:
     directory.mkdir(mode=0o700, parents=True, exist_ok=True)
     name = f"{secrets.token_hex(24)}.{suffix}"
     path = directory / name
-    with path.open("xb") as output:
-        output.write(data)
+    # 独占创建失败时不能删除可能属于其他请求的文件。
+    output = path.open("xb")
+    try:
+        with output:
+            output.write(data)
+    except BaseException:
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            logging.getLogger(__name__).warning("清理上传文件失败：%s", path)
+        raise
     return f"private:{name}"
 
 
@@ -677,15 +688,3 @@ def download_attachment(
         raise _not_found("附件不存在")
     return FileResponse(path, media_type="application/octet-stream", filename=name,
                         headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"})
-
-
-async def _save_upload(file: UploadFile) -> str:
-    """保存作业附件，校验扩展名与体积（PRD 10.1）。"""
-    from app.config import settings
-    from app.utils.upload import save_upload
-
-    return await save_upload(
-        file,
-        allowed=settings.allowed_extension_list,
-        max_mb=settings.max_upload_mb,
-    )

@@ -12,6 +12,8 @@ venv/
 
 # 数据与上传文件
 app/data/
+/private_homework/
+# 自定义 PRIVATE_HOMEWORK_DIR 请放在仓库和 Docker 构建上下文之外。
 app/uploads/*
 !app/uploads/.gitkeep
 

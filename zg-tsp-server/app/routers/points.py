@@ -102,16 +102,21 @@ async def rank(
     if user.role == ROLE_PARENT:
         raise _forbidden("家长无排行榜查看权限")
 
-    repo = Repo(db)
+    student_id = user.id if user.role == ROLE_STUDENT else None
+    return rank_response(Repo(db), req, student_id)
+
+
+def rank_response(repo: Repo, req: RankRequest, student_id: int | None):
+    """构造排行榜响应；student_id 为需要查询名次的学生，None 表示无个人排名。"""
     size = min(req.size, MAX_RANK_SIZE)
 
     if req.type == "day":
         day = date.today()
         rows, total = repo.rank_day(day, req.page, size)
-        my_rank = repo.rank_position(user.id, day) if user.role == ROLE_STUDENT else 0
+        my_rank = repo.rank_position(student_id, day) if student_id is not None else 0
     else:
         rows, total = repo.rank_total(req.page, size)
-        my_rank = repo.rank_position(user.id, None) if user.role == ROLE_STUDENT else 0
+        my_rank = repo.rank_position(student_id, None) if student_id is not None else 0
 
     # 补齐昵称
     result = []

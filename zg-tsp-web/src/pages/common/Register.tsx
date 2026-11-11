@@ -12,11 +12,9 @@ import { Link, useNavigate } from 'react-router-dom'
 
 import { authApi } from '../../api/auth'
 import { ServiceUnavailableError } from '../../api/client'
+import { PHONE_RE } from '../../utils/phone'
 
 type Role = 'student' | 'parent' | 'teacher'
-
-/** 手机号格式（迭代 v2.1） */
-const PHONE_RE = /^1[3-9]\d{9}$/
 
 /** 各角色注册所需的码 */
 const CODE_FIELD = {
