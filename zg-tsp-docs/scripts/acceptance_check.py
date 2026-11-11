@@ -17,7 +17,7 @@ from datetime import datetime, timedelta
 
 import httpx
 
-BASE = "http://127.0.0.1:8000"
+BASE = "http://127.0.0.1:8000/homework_api"
 SUFFIX = f"{secrets.randbelow(1000000):06d}"
 
 results: list[tuple[bool, str, str]] = []
@@ -373,11 +373,11 @@ def main() -> int:
     spec = httpx.get(f"{BASE}/openapi.json", timeout=10).json()
     bad = []
     for path, ops in spec.get("paths", {}).items():
-        if path in ("/health", "/openapi.json", "/docs", "/docs/oauth2-redirect", "/redoc"):
+        if path in ("/homework_api/health", "/homework_api/openapi.json", "/homework_api/docs", "/homework_api/docs/oauth2-redirect", "/homework_api/redoc"):
             continue
         # 迭代 v2.1：/uploads 是静态文件挂载（GET 下载上传/导出的文件），
         # 不是业务接口，不纳入「全 POST」约束
-        if path.startswith("/uploads"):
+        if path.startswith("/homework_api/uploads"):
             continue
         for method in ops:
             if method.lower() != "post":

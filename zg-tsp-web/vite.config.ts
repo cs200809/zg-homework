@@ -6,7 +6,7 @@ import path from 'node:path'
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
 
-  // 开发环境走代理规避跨域；生产由 .env.production 指定直连地址
+  // 开发环境走代理规避跨域，保留服务端的路径前缀。
   const proxyTarget = env.VITE_PROXY_TARGET || 'http://127.0.0.1:8000'
 
   return {
@@ -17,12 +17,10 @@ export default defineConfig(({ mode }) => {
     server: {
       port: 5173,
       proxy: {
-        // 前端统一请求 /api/xxx，服务端实际路径是 /xxx（无 /api 前缀），
-        // 因此必须 rewrite 去掉 /api，否则服务端返回 404。
-        '/api': {
+        // 服务端实际路径包含 /homework_api，代理时不得剥除。
+        '/homework_api': {
           target: proxyTarget,
           changeOrigin: true,
-          rewrite: (path) => path.replace(/^\/api/, ''),
         },
       },
     },

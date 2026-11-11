@@ -49,7 +49,7 @@ workspace/
 # 终端 1：服务端
 cd zg-tsp-server && uvicorn app.main:app --host 127.0.0.1 --port 8000
 
-# 终端 2：Web 端（Vite 代理 /api → 127.0.0.1:8000）
+# 终端 2：Web 端（Vite 代理 /homework_api → 127.0.0.1:8000（保留前缀））
 cd zg-tsp-web && npm run dev
 
 # 终端 3：验收脚本
@@ -70,7 +70,7 @@ python -m app.seed.apply_comments        # 补齐字段中文注释
 uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
-健康检查：`POST /health` → `{"code":0,"message":"ok","data":{"status":"ok"}}`
+健康检查：`POST /homework_api/health` → `{"code":0,"message":"ok","data":{"status":"ok","env":"dev"}}`（`env` 随环境而变）
 
 ### 部署用数据库初始化
 

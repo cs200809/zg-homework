@@ -497,7 +497,7 @@ sys.exit(1)
   ok "使用设备：${device_id}"
 
   # 移动端 API 走构建期注入
-  local define="--dart-define=API_BASE_URL=${API_TARGET}"
+  local define="--dart-define=API_BASE_URL=${API_TARGET%/}/homework_api"
 
   # Android：显式指定 SDK 根目录。
   # Flutter 探测 Android SDK 的判据很宽松（存在 platform-tools 或 licenses
@@ -680,7 +680,7 @@ if [ "${CMD}" != "stop" ] && [ "${CMD}" != "status" ] && [ "${CMD}" != "logs" ];
   echo
   info "提示：查看日志 ./scripts/dev.sh logs    停止全部 ./scripts/dev.sh stop"
   echo "  Web 端： http://localhost:${WEB_PORT}"
-  # /health 是 POST-only 路由，直接用浏览器打开会返回 405
-  echo "  服务端： curl -X POST ${API_TARGET}/health"
+  # 健康检查是 POST-only 路由，直接用浏览器打开会返回 405
+  echo "  服务端： curl -X POST ${API_TARGET%/}/homework_api/health"
   echo
 fi
