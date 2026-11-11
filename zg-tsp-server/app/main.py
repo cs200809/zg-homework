@@ -65,6 +65,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["POST", "OPTIONS"],
     allow_headers=["*"],
+    expose_headers=["Content-Disposition"],
 )
 
 # 上传文件访问（迭代 v2.1：此前 /uploads/<name> 无对应路由，作业附件实际 404）

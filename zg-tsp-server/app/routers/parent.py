@@ -21,6 +21,7 @@ from app.db.repo import Repo
 from app.db.session import get_db
 from app.models.constants import POINT_TYPE_PARENT_REWARD, ROLE_PARENT, ROLE_STUDENT, HOMEWORK_NOT_STARTED
 from app.models.entities import ParentStudent, User
+from app.routers.points import RankRequest, rank_response
 from app.services import point_service
 from app.utils.deps import get_verified_user
 from app.utils.response import CODE_BAD_REQUEST, CODE_FORBIDDEN, CODE_NOT_FOUND, ok
@@ -80,6 +81,10 @@ class ChildPointsRequest(BaseModel):
     student_id: int
     page: int = Field(1, ge=1)
     size: int = Field(20, ge=1, le=100)
+
+
+class ChildRankRequest(RankRequest):
+    student_id: int
 
 
 class ConsumeRequest(BaseModel):
@@ -254,6 +259,25 @@ async def my_children(
         ],
         "total": len(children),
     })
+
+
+@router.post("/child-rank")
+async def child_rank(
+    req: ChildRankRequest,
+    parent: User = Depends(get_verified_user),
+    db: Session = Depends(get_db),
+):
+    """查看与学生排行榜一致的榜单及已绑定孩子的排名。"""
+    _require_parent(parent)
+    repo = Repo(db)
+    child = _own_child(repo, parent, req.student_id)
+    if child.role != ROLE_STUDENT:
+        raise _forbidden("绑定用户不是学生")
+    result = rank_response(repo, req, child.id)
+    # 家长只需要展示昵称和积分，不返回其他学生用作账号的手机号。
+    for item in result["data"]["list"]:
+        item["username"] = None
+    return result
 
 
 @router.post("/child-points")

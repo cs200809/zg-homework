@@ -36,8 +36,25 @@ curl -X POST http://127.0.0.1:8000/health
 
 ```bash
 docker build -t zg-tsp-server:1.0.0 .
-docker run -d -p 8000:8000 --env-file .env zg-tsp-server:1.0.0
+docker run -d -p 8000:8000 --env-file .env \
+  -e PRIVATE_HOMEWORK_DIR=/app/private_homework \
+  -v zg-tsp-private-homework:/app/private_homework \
+  -v zg-tsp-public-uploads:/app/app/uploads \
+  zg-tsp-server:1.0.0
 ```
+
+作业私有附件由 `PRIVATE_HOMEWORK_DIR` 配置，默认是服务端目录下的
+`private_homework`（镜像中为 `/app/private_homework`），不通过静态目录公开。
+生产环境应使用绝对路径并挂载持久化卷；上例显式指定目录，防止 `.env` 中的
+其他配置使挂载失效。自定义目录应位于仓库及 Docker 构建上下文之外，且不能
+位于 `UPLOAD_DIR` 内；确保服务进程有读写权限，限制其他用户访问。多实例需
+共享相同附件存储，并与数据库一起备份、恢复。已有默认目录中的文件在修改路径前
+须迁移至新目录。公开上传目录也需独立持久化，不能与私有目录重叠。
+
+提交数据库时若发生异常，提交结果可能不确定，附件会保留以避免删除已被引用的
+文件，可能因此产生孤儿文件。回收时应先备份，暂停所有上传及数据库写入，并等待
+在途请求结束、确认数据库事务结果；对照当前数据库中所有 `private:` 附件引用，
+仅删除确认不再被引用且超过安全等待期的文件。不要仅按文件年龄自动删除。
 
 ## 目录结构
 

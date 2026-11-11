@@ -40,6 +40,7 @@ class Settings(BaseSettings):
 
     # --- 上传 ---
     upload_dir: str = str(BASE_DIR / "app" / "uploads")
+    private_homework_dir: str = str(BASE_DIR / "private_homework")
     max_upload_mb: int = 10
     allowed_extensions: str = "jpg,jpeg,png,pdf"
     # 文章上传（迭代 v2.1：支持 PDF / word）

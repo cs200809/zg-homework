@@ -107,6 +107,49 @@ REPOS_DIR="$PWD/../zg-tsp-repos" ./scripts/build.sh ios dev       # → IPA
 
 `dev.sh` 是 POSIX `sh`（**不能用数组、`[[ ]]`、进程替换**），日志与 PID 落在 `.dev-logs/`。`build.sh` 是 bash 3.2 兼容。**`split_repos.sh split` 会删除已有目标目录后重建；`dev.sh stop` 可能终止占用配置端口的其他进程。**执行前确认目标及影响。`init.sh` 也会自动探测仓库位置，执行前确认 SQL 和数据库来源。
 
+### 云服务器部署（裸机 systemd + nginx）
+
+服务端与 Web 端各有一个打包脚本，产出可直接上传到云服务器解压安装的 tar.gz：
+
+```bash
+cd zg-tsp-server && ./scripts/package.sh    # → dist/zg-tsp-server-<ver>.tar.gz
+cd zg-tsp-web    && ./scripts/package.sh    # → dist/zg-tsp-web-<ver>.tar.gz
+```
+
+产物默认写到**仓库根的 `dist/`**（`BUILD_OUTPUT_DIR` 可覆盖；`VERSION` 覆盖版本号）。
+服务端脚本从 ORM 重新生成 `init.sql`（不手工维护），并剔除测试依赖生成
+`requirements.prod.txt`；产物中**不含任何真实凭据**（`.env`、admin 密码哈希一律排除）。
+
+目标机上执行（需 root）：
+
+```bash
+# 服务端
+tar -xzf zg-tsp-server-1.0.0.tar.gz && cd zg-tsp-server-1.0.0
+sudo ./install.sh --database-url "mysql+pymysql://user:pass@host:3306/zg_tsp?charset=utf8mb4" --domain tsp.example.com
+
+# Web 端
+tar -xzf zg-tsp-web-1.0.0.tar.gz && cd zg-tsp-web-1.0.0
+sudo ./install.sh --domain tsp.example.com --api-upstream 127.0.0.1:8000
+```
+
+部署架构：**同域反代**。前端 `VITE_API_BASE_URL=/api`，Nginx 把 `/api/` 转发给服务端
+（`proxy_pass` 末尾带 `/` 以剥掉前缀，因服务端路由本身没有 `/api` 前缀）。
+因此**不需要 CORS，服务端 8000 端口只监听 `127.0.0.1`，不对公网开放**。
+各模块的 `deploy/README-DEPLOY.md` 有完整的部署、升级、回滚、备份与排错说明。
+
+关键约束：
+
+- **systemd 固定单 worker**（`--workers 1`）。成语接龙会话在进程内存里
+  （`app/routers/games.py` 的 `SessionStore`），多 worker 会丢会话。
+- **上传数据必须在代码目录之外**（默认 `/var/lib/zg-tsp/`），
+  否则升级覆盖代码时会丢文件。
+- **`db_bootstrap.py` 不依赖 mysql 客户端**（用项目自带的 PyMySQL），
+  且幂等：重复执行不重复插入，也**不覆盖已存在的 admin 密码**。
+- 渲染 `.env` 用 `deploy/render_env.sh`（awk + 环境变量），
+  **不要用 `sed -i`** —— BSD 与 GNU 的 `-i` 语义不同，且 `-v` 会吃掉密码里的反斜杠。
+- **无迁移框架**：`create_all()` 只建缺失的表，不给已有表加列。涉及表结构的升级
+  需按 `app/seed/migrate_*.py` 单独执行迁移，迁移前备份数据库。
+
 ### 验收
 
 ```bash
@@ -192,9 +235,10 @@ src/
 - **状态**：Zustand 单一 store，手动读写 localStorage（key `token` / `user`），无 persist 中间件。
 - **路由无懒加载**：`router/index.tsx` 静态 import 全部页面，无 `lazy`/`Suspense`。
 - **页面数据获取**：`useCallback` + `useEffect` + `useState` 三件套，`Promise.all` 并发拉取，错误走 `message.error`。全站无 react-query。
+- **手机号校验**：`src/utils/phone.ts` 是校验规则的唯一来源，与服务端 `app/schemas/auth.py` 的 `PHONE_PATTERN`、小程序 `utils/validate.js` 三处必须一致。**注册严格**（非手机号一律拒绝），**登录仅校验纯数字输入**——服务端 `admin` 账号的用户名是 `admin`（非手机号），若登录也强制手机号格式，管理员将无法登录。改规则时三处一起改。
 - **已知职责错位**：`api/parent.ts` 里混放了 admin 的全部接口（invite/user/rule/article/stats），文件命名与内容不符。
 
-**部署**：`Dockerfile` 两阶段（node:20-alpine 构建 → nginx:alpine），`nginx.conf` 配了 `location /api/` 反代到 `http://server:8000/`、`client_max_body_size 12m`（作业文件上传）、SPA 回退 `try_files ... /index.html`。但仓库里**没有 docker-compose.yml**，且 `.env.production` 的 baseURL 是绝对地址 `https://api.example.com`（占位符），与 nginx 的 `/api/` 反代语义互斥——生产构建前必须确认走哪条路。
+**部署**：`Dockerfile` 两阶段（node:20-alpine 构建 → nginx:alpine），`nginx.conf` 配了 `location /api/` 反代到 `http://server:8000/`、`client_max_body_size 12m`（作业文件上传）、SPA 回退 `try_files ... /index.html`。`.env.production` 的 baseURL 已是 `/api`，与反代语义一致。仍**没有 docker-compose.yml**，且反代指向的 `server:8000` 无 compose 支撑——Docker 路径需自备 compose；裸机部署走「云服务器部署」一节的 `scripts/package.sh`。
 
 ## 移动端架构
 
@@ -242,7 +286,7 @@ lib/
 
 6. **`api/parent.ts` 里混放了 admin 的全部接口**（invite/user/rule/article/stats），文件职责与命名不符。
 
-7. **`.env.production` 与 `nginx.conf` 的 `/api/` 反代语义冲突** —— 生产 baseURL 是绝对域名 `https://api.example.com`（占位符），nginx 反代段形同虚设；且 nginx 反代指向的 `server:8000` 无 compose 支撑。
+7. **`.env.production` 与 `nginx.conf` 的 `/api/` 反代语义冲突** —— ~~生产 baseURL 是绝对域名 `https://api.example.com`（占位符）~~ **已修复**：`.env.production` 的 `VITE_API_BASE_URL` 已改为 `/api`，与 nginx 的 `/api/` 反代语义一致。裸机部署见「云服务器部署」一节。仍存留的问题是 **nginx 反代指向的 `server:8000` 无 compose 支撑**（Docker 路径仍需自备 compose）。
 
 8. **移动端作业附件支持不完整**：独立仓库的 `submitHomework` 接受 `filePath` 但未将其附加到请求，学生端作业提交只传文本。`file_picker` 已用于文章文件选择，不可视为未使用依赖。
 

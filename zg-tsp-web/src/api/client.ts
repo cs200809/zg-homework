@@ -61,6 +61,26 @@ client.interceptors.response.use(
   },
 )
 
+/** 从文件下载的 HTTP 错误中读取服务端 JSON 文案，解析失败时使用默认文案。 */
+export async function downloadErrorMessage(error: unknown, fallback: string): Promise<string> {
+  if (axios.isAxiosError(error) && error.response?.data instanceof Blob) {
+    const blob = error.response.data
+    if (blob.type.toLowerCase().includes('json')) {
+      try {
+        const payload: unknown = JSON.parse(await blob.text())
+        if (payload && typeof payload === 'object' && 'message' in payload &&
+            typeof payload.message === 'string' && payload.message.trim()) {
+          return payload.message
+        }
+      } catch {
+        // 非法 JSON 或读取失败时保留默认文案。
+      }
+    }
+    return fallback
+  }
+  return error instanceof Error ? error.message : fallback
+}
+
 /**
  * 统一 POST 调用（全 POST + Body 约定，PRD 3.1）。
  * 返回 data 字段；业务错误以 { code, message } 抛出。

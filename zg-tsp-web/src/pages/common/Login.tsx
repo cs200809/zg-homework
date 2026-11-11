@@ -7,6 +7,7 @@ import { Link, useNavigate } from 'react-router-dom'
 
 import { ROLE_HOME, useAuthStore } from '../../store/auth'
 import { ServiceUnavailableError } from '../../api/client'
+import { checkLoginUsername } from '../../utils/phone'
 
 export default function LoginPage() {
   const [form] = Form.useForm()
@@ -50,8 +51,19 @@ export default function LoginPage() {
         )}
 
         <Form form={form} onFinish={onFinish} size="large">
-          <Form.Item name="username" rules={[{ required: true, message: '请输入用户名' }]}>
-            <Input prefix={<UserOutlined />} placeholder="用户名" autoFocus />
+          <Form.Item
+            name="username"
+            rules={[
+              { required: true, message: '请输入用户名' },
+              {
+                validator: (_, value) => {
+                  const error = checkLoginUsername(value)
+                  return error ? Promise.reject(new Error(error)) : Promise.resolve()
+                },
+              },
+            ]}
+          >
+            <Input prefix={<UserOutlined />} placeholder="手机号" maxLength={20} autoFocus />
           </Form.Item>
           <Form.Item name="password" rules={[{ required: true, message: '请输入密码' }]}>
             <Input.Password prefix={<LockOutlined />} placeholder="密码" />

@@ -621,7 +621,7 @@ POST /homework/pending  {page, size}                                       teach
 ```
 POST /checkin/do      {}   student
 POST /checkin/status  {}   student
-POST /points/rank     {type: "day"|"total", page, size}   all
+POST /points/rank     {type: "day"|"total", page, size}   admin/teacher/student
 POST /points/log      {page, size, type?}                 student
 POST /points/summary  {}                                  student
 ```
@@ -698,6 +698,7 @@ POST /games/records        {page, size}                  student
 
 - 学生生成绑定码，家长输入绑定（可绑多个）
 - 查看孩子积分与明细
+- 查看排行榜：仅家长可查询已绑定的学生；返回与 `/points/rank` 相同的榜单，`my_rank` 为指定孩子的名次
 - 消耗：预设事项（看手机-5、看电视-5、买玩具-20、买零食-10、自定义）
 - 校验余额 ≥ 扣分，否则 400
 - 写 PointLog（type=consume，points 为负，operator=家长）
@@ -710,12 +711,15 @@ POST /games/records        {page, size}                  student
 POST /parent/bind          {bind_code}                    parent
 POST /parent/children      {}                             parent
 POST /parent/child-points  {student_id, page, size}       parent
+POST /parent/child-rank    {student_id, type, page, size} parent
 POST /parent/consume       {student_id, item, points, remark} parent
 POST /parent/reward        {student_id, item, points, remark?} parent
 POST /parent/reward-items  {}                             parent
 POST /parent/consume-items {}                             parent
 POST /parent/unbind        {student_id}                   parent
 ```
+
+`/parent/child-rank` 的 `student_id` 必填；`type` 默认 `day`，可选 `day` 或 `total`；`page` 默认 1 且 ≥1，`size` 默认 50、范围 1–50。响应 `data` 为 `{type, list, total, page, size, my_rank}`，`list` 每项含 `{rank, user_id, username, nickname, points}`，其中 `username` 固定为 null，避免向家长暴露其他学生的账号；`my_rank` 为孩子在完整榜单中的名次，未上榜为 0。榜单范围、排序和分页与 `/points/rank` 一致。非家长、未绑定或绑定用户不是学生返回 403，学生不存在返回 404，参数校验失败返回 400；身份与绑定关系由服务端验证。
 
 ---
 
@@ -900,6 +904,7 @@ POST /games/records
 POST /parent/bind
 POST /parent/children
 POST /parent/child-points
+POST /parent/child-rank
 POST /parent/consume
 POST /parent/reward
 POST /parent/reward-items
@@ -959,7 +964,7 @@ POST /health
 | 加入班级                         | ❌     | ❌       | ✅       | ❌       |
 | 布置作业/看完成情况                   | ❌     | ✅（自己班级） | ❌       | ❌       |
 | 签到/交作业/阅读/游戏                 | ❌     | ❌       | ✅       | ❌       |
-| 查看排行榜                        | 只读    | 只读      | 只读      | ❌       |
+| 查看排行榜                        | 只读    | 只读      | 只读      | 只读（通过绑定孩子） |
 | 积分消耗                         | ❌     | ❌       | ❌       | ✅（绑定孩子） |
 | 重新生成班级邀请码                  | ✅     | ✅（自己班级） | ❌       | ❌       |
 | 重新生成学生绑定码                  | ✅     | ✅（本班学生） | ❌       | ❌       |
@@ -1195,14 +1200,14 @@ POST /health
 POST /parent/homework/list      {student_id, page?, size?}              parent，当前班级作业
 POST /parent/homework/detail    {student_id, homework_id}               parent
 POST /parent/homework/submit    multipart: student_id, homework_id, text_content?, file?  parent
-POST /parent/homework/download  {student_id, homework_id}               parent，下载该孩子作业附件
-POST /homework/attachment       {homework_id, student_id?}               按调用者角色及作业记录权限鉴权，下载附件
-POST /parent/articles/list      {page?, size?}                          parent，仅已发布
-POST /parent/articles/detail    {article_id}                            parent，仅已发布
-POST /parent/articles/download  {article_id}                            parent，仅已发布，PDF 二进制流
+POST /parent/homework/download  {student_id, homework_id}               parent，下载作业内容与作答 PDF，不含附件
+POST /homework/attachment       {homework_id, student_id}                按调用者角色及作业记录权限鉴权，下载附件
+POST /parent/articles/list      {student_id, page?, size?}              parent，仅已发布
+POST /parent/articles/detail    {student_id, article_id}                parent，仅已发布
+POST /parent/articles/download  {student_id, article_id}                parent，仅已发布，PDF 二进制流
 ```
 
-- 新流程的 PDF 和作业附件均使用上述 Bearer 鉴权的 POST 二进制流，不通过公开 URL 下载；服务端在返回文件前校验资源状态及访问权限。
+- 本节家长流程的 PDF 和作业附件使用上述 Bearer 鉴权的 POST 二进制流，不通过公开 URL 下载；服务端在返回文件前校验资源状态及访问权限。原学生文章导出接口仍返回公开 URL，不能视为鉴权下载。
 - **历史风险**：现存 `GET /uploads/<name>` 静态挂载不鉴权，历史公开链接仍可被持有者访问；新增鉴权接口并不撤销这些链接或自动保护已有文件，需另行治理存量文件与公开访问。
 
 **补充验收**
