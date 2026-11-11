@@ -90,9 +90,9 @@ zg-tsp 移动端一键打包
 
 环境变量：
   REPOS_DIR         仓库目录（默认自动探测 ../zg-tsp-repos）
-  API_BASE_URL      服务端基地址
-                    dev  默认 http://127.0.0.1:8000
-                    prod 默认 https://api.example.com
+  API_BASE_URL      服务端基地址（须包含 /homework_api）
+                    dev  默认 http://127.0.0.1:8000/homework_api
+                    prod 默认 https://api.example.com/homework_api
   BUILD_OUTPUT_DIR  产物归档目录（默认 $ROOT/dist）
   VERSION           覆盖版本号（默认取 pubspec.yaml）
   DEVELOPMENT_TEAM  iOS 签名团队 ID（Apple Developer Team ID）
@@ -101,8 +101,8 @@ zg-tsp 移动端一键打包
                     不设置则回退为「在 Xcode 中为 Runner target 配置 Signing Team」。
 
 示例：
-  API_BASE_URL=https://test.example.com ./scripts/build.sh ios dev
-  API_BASE_URL=https://api.example.com  ./scripts/build.sh android prod
+  API_BASE_URL=https://test.example.com/homework_api ./scripts/build.sh ios dev
+  API_BASE_URL=https://api.example.com/homework_api  ./scripts/build.sh android prod
 
 环境安装教程见 zg-tsp-docs/sys_doc/ENV_SETUP.md
 EOF
@@ -407,8 +407,8 @@ check_ios_signing() {
 
 default_api_base_url() {
   case "$1" in
-    prod) echo "https://api.example.com" ;;
-    *)    echo "http://127.0.0.1:8000" ;;
+    prod) echo "https://api.example.com/homework_api" ;;
+    *)    echo "http://127.0.0.1:8000/homework_api" ;;
   esac
 }
 

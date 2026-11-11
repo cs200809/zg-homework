@@ -24,7 +24,7 @@ cp .env.example .env.development
 npm run dev
 ```
 
-开发环境走 Vite 代理（`/api` → `VITE_PROXY_TARGET`，默认 `http://127.0.0.1:8000`），避免跨域。
+开发环境走 Vite 代理（`/homework_api` → `VITE_PROXY_TARGET`，默认 `http://127.0.0.1:8000`，保留路径前缀），避免跨域。
 
 ## 打包
 
@@ -41,10 +41,10 @@ docker run -d -p 8080:80 zg-tsp-web:1.0.0
 
 | 文件                 | 用途       | API 地址                 |
 |--------------------|----------|------------------------|
-| `.env.development` | 开发/测试构建   | `/api`（走代理）             |
-| `.env.production`  | 生产构建     | `https://api.example.com` |
+| `.env.development` | 开发/测试构建 | `/homework_api`（Vite 代理） |
+| `.env.production`  | 生产构建 | `/homework_api`（Nginx 代理） |
 
-生产发版前替换 `.env.production` 中的地址。两个文件均不含敏感信息，可提交；
+生产默认同域反代，直连其他域名时须包含 `/homework_api` 前缀并配置 CORS。两个文件均不含敏感信息，可提交；
 `.env.local` 为本地覆盖，已在 `.gitignore` 中排除。
 
 ## 目录结构

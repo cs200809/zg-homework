@@ -57,7 +57,17 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title=settings.app_name, debug=settings.debug, lifespan=lifespan)
+API_PREFIX = "/homework_api"
+
+app = FastAPI(
+    title=settings.app_name,
+    debug=settings.debug,
+    lifespan=lifespan,
+    docs_url=f"{API_PREFIX}/docs",
+    redoc_url=f"{API_PREFIX}/redoc",
+    openapi_url=f"{API_PREFIX}/openapi.json",
+    swagger_ui_oauth2_redirect_url=f"{API_PREFIX}/docs/oauth2-redirect",
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -70,7 +80,7 @@ app.add_middleware(
 
 # 上传文件访问（迭代 v2.1：此前 /uploads/<name> 无对应路由，作业附件实际 404）
 Path(settings.upload_dir).mkdir(parents=True, exist_ok=True)
-app.mount("/uploads", StaticFiles(directory=settings.upload_dir), name="uploads")
+app.mount(f"{API_PREFIX}/uploads", StaticFiles(directory=settings.upload_dir), name="uploads")
 
 
 # --- 统一异常响应（PRD 3.1）---
@@ -104,21 +114,21 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 # --- 路由 ---
 
 
-@app.post("/health")
+@app.post(f"{API_PREFIX}/health")
 async def health():
     """健康检查：供 Docker HEALTHCHECK 与客户端可用性探测使用。"""
     return ok({"status": "ok", "env": settings.env})
 
 
-app.include_router(auth.router)
-app.include_router(admin.router)
-app.include_router(point_rules_admin.router)
-app.include_router(classes.router)
-app.include_router(homework.router)
-app.include_router(homework_review_admin.router)
-app.include_router(checkin.router)
-app.include_router(points.router)
-app.include_router(parent.router)
-app.include_router(articles.router)
-app.include_router(games.router)
-app.include_router(admin_idioms.router)
+app.include_router(auth.router, prefix=API_PREFIX)
+app.include_router(admin.router, prefix=API_PREFIX)
+app.include_router(point_rules_admin.router, prefix=API_PREFIX)
+app.include_router(classes.router, prefix=API_PREFIX)
+app.include_router(homework.router, prefix=API_PREFIX)
+app.include_router(homework_review_admin.router, prefix=API_PREFIX)
+app.include_router(checkin.router, prefix=API_PREFIX)
+app.include_router(points.router, prefix=API_PREFIX)
+app.include_router(parent.router, prefix=API_PREFIX)
+app.include_router(articles.router, prefix=API_PREFIX)
+app.include_router(games.router, prefix=API_PREFIX)
+app.include_router(admin_idioms.router, prefix=API_PREFIX)

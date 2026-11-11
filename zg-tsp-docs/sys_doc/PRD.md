@@ -2,7 +2,7 @@
 
 > 版本：v2.1（迭代：手机号注册 / 班级码与绑定码重生成 / 阅读文档能力）  
 > 技术栈：React + Ant Design 前端 / Python FastAPI 后端 / JWT 认证  
-> 接口约定：**全部使用 POST，参数走 Body**，避免 URL 信息泄露  
+> 接口约定：**业务接口使用 POST，参数走 Body**；实际路径统一以 `/homework_api` 开头，详见 3.1 节
 > 文档目的：作为 LLM 直接开发项目的唯一依据
 
 ---
@@ -165,7 +165,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 # 打包：docker build -t zg-tsp-server:1.0.0 .
 ```
 
-健康检查：`POST /health` → `{code:0, data:{status:"ok"}}`
+健康检查：`POST /homework_api/health` → `{code:0, data:{status:"ok", env:...}}`
 
 **zg-tsp-web**
 
@@ -183,12 +183,12 @@ npm run build                   # 产出 dist/，纯静态文件
 
 ```bash
 cd zg-tsp-ios
-flutter build ipa --flavor dev    --dart-define=API_BASE_URL=https://test.example.com
-flutter build ipa --flavor prod   --dart-define=API_BASE_URL=https://api.example.com
+flutter build ipa --flavor dev    --dart-define=API_BASE_URL=https://test.example.com/homework_api
+flutter build ipa --flavor prod   --dart-define=API_BASE_URL=https://api.example.com/homework_api
 
 cd zg-tsp-android
-flutter build apk --flavor dev    --dart-define=API_BASE_URL=https://test.example.com
-flutter build appbundle --flavor prod --dart-define=API_BASE_URL=https://api.example.com
+flutter build apk --flavor dev    --dart-define=API_BASE_URL=https://test.example.com/homework_api
+flutter build appbundle --flavor prod --dart-define=API_BASE_URL=https://api.example.com/homework_api
 ```
 
 产出 `.ipa` / `.aab` / `.apk`。**API 基地址**通过 `--dart-define` 在构建期注入，
@@ -210,7 +210,11 @@ flutter build appbundle --flavor prod --dart-define=API_BASE_URL=https://api.exa
 
 ### 3.1 请求规范
 
-- 所有接口：`POST`
+- **路径全局约定**：本文业务接口清单、示例及后续需求中未带前缀的路径均为相对于 API 基址的路径，不是服务端根路径。服务端实际业务路由及健康检查统一以 `/homework_api` 开头，例如 `POST /auth/login` 的实际路径为 `POST /homework_api/auth/login`，`POST /health` 为 `POST /homework_api/health`。第 14 节待实现接口也遵循同一前缀，并不因此表示已经实现。
+- API 基址应包含此前缀，例如 `https://api.example.com/homework_api`；将基址末尾的 `/` 与相对路径开头的 `/` 规范拼接，避免漏掉或重复前缀。反向代理应保证请求最终命中带 `/homework_api` 的服务端路径；若对外另设前缀，须明确配置映射，不可假定服务端会接受无前缀路径。
+- `file_url` 保持**相对于 API 基址**的契约，例如返回 `/uploads/x.pdf`，与上述基址拼接后访问 `https://api.example.com/homework_api/uploads/x.pdf`；不要把 `/homework_api` 再写入 `file_url`，也不要直接相对于域名根路径解析。静态上传使用 `GET /homework_api/uploads/<name>`，无需鉴权，存在公开访问风险。
+- API 文档和模式地址分别为 `GET /homework_api/docs`、`GET /homework_api/redoc` 和 `GET /homework_api/openapi.json`；Swagger OAuth2 回调为 `/homework_api/docs/oauth2-redirect`。它们和静态文件不是 POST 业务接口。
+- 业务接口及健康检查：`POST`
 - Content-Type：`application/json`；文件上传 `multipart/form-data`
 - 认证：`Authorization: Bearer <token>`
 - 统一响应：
@@ -231,7 +235,7 @@ Body 传 `{page, size}`，返回 `{list, total, page, size}`
 
 ### 3.3 全局安全
 
-- 全 POST + Body，URL 不携带业务参数
+- 业务接口使用 POST + Body，URL 不携带业务参数；静态文件及 API 文档例外
 - 密码仅走 Body，日志脱敏
 - JWT 放 Header，有效期 7 天
 - 写操作服务端二次校验权限与余额
@@ -647,7 +651,7 @@ POST /points/summary  {}                                  student
 - 阅读文章支持导出 PDF：服务端用 reportlab 排版（内置中文 CID 字体 `STSong-Light`，
   无需外部字体文件），生成的 PDF 存 `uploads/` 并返回可下载地址
 - 阅读时只读，不可编辑（学生端无任何编辑入口）
-- 上传与导出的文件通过 `GET /uploads/<name>` 访问（静态挂载，非业务接口）
+- 上传与导出的文件通过 `GET /homework_api/uploads/<name>` 访问（静态挂载，非业务接口；`file_url` 仍为相对 API 基址的 `/uploads/<name>`）
 
 **积分**（读规则表）
 
@@ -841,6 +845,8 @@ POST /admin/idioms/batch-delete {question_ids: []}
 ---
 
 ## 7. 接口清单（全 POST 总览）
+
+本节路径均相对于含 `/homework_api` 的 API 基址；实际请求路径须加此前缀，详见 3.1 节。清单包含尚未实现的契约，不能仅凭列出判断已实现。
 
 ```
 # 认证
@@ -1127,7 +1133,7 @@ POST /health
 - [ ] 所有积分变动可在明细追溯
 - [ ] 敏感操作（禁用、规则修改、文章删除）有审计日志
 - [ ] 学生/家长端移动端可用
-- [ ] 全接口均为 POST，URL 不携带业务参数
+- [ ] 业务接口均为 POST，URL 不携带业务参数；静态文件和 API 文档使用 GET
 
 **迭代 v2.1（注册 / 班级码 / 阅读文档能力）**
 
@@ -1138,7 +1144,7 @@ POST /health
 - [ ] 学生端可查看自己的绑定码（Web 与移动端均提供入口）
 - [ ] 老师 / admin 可发布 PDF / word 文章，正文由服务端正确抽取
 - [ ] 文章可导出为 PDF 且文件可正常打开
-- [ ] 上传与导出的文件可通过 `/uploads/<name>` 访问
+- [ ] 上传与导出的文件可通过 `/homework_api/uploads/<name>` 访问，返回的 `file_url` 仍为相对 API 基址的 `/uploads/<name>`
 
 **模块独立性**
 
@@ -1153,7 +1159,7 @@ POST /health
 - [ ] **四角色 × 两平台功能对齐**：任一功能在移动端或 Web 端均不存在功能缺口
 - [ ] 移动端批量操作有逐条等效入口（成语题库导入/删除等）
 - [ ] admin 可导入成语题库（≥200 条），导入去重与校验生效；禁用题目学生端抽不到
-- [ ] 服务端 `/health` 可用，未引入多余的监控依赖
+- [ ] 服务端 `POST /homework_api/health` 可用，未引入多余的监控依赖
 
 ---
 
@@ -1170,7 +1176,7 @@ POST /health
 | 5 | 数独题库来源   | **内置生成算法**                           | 服务端按难度算法生成，无需预置题库                          |
 | 6 | 仓库形态     | **四个独立仓库**，非 monorepo                | 各模块独立 clone/发版；本仓库仅作聚合与文档同步                |
 | 7 | 环境渠道     | **测试 + 生产**（移动端两个渠道，Web 两套构建变量）      | 见 2.2.2；地址均外置，不硬编码                         |
-| 8 | 健康检查与监控  | **仅 `/health`**，暂不引入就绪探针与 Prometheus | P0 仅需实现 `/health`                          |
+| 8 | 健康检查与监控  | **仅 `/homework_api/health`**，暂不引入就绪探针与 Prometheus | P0 仅需实现该健康检查                          |
 
 ### 13.1 决策衍生需求
 
@@ -1183,7 +1189,7 @@ POST /health
     - `POST /games/idiom/question`（学生端取题）
 - **决策 6 衍生**：四模块拆分独立仓库后，接口契约需有唯一权威来源；
   本文档（第 7 节接口清单）即为契约基线，各仓库以其为准。
-- **决策 8 衍生**：不引入监控依赖，`/health` 返回静态 `status`，不探测数据库连通性。
+- **决策 8 衍生**：不引入监控依赖，`/homework_api/health` 返回静态 `status`，不探测数据库连通性。
 
 ---
 
@@ -1208,7 +1214,7 @@ POST /parent/articles/download  {student_id, article_id}                parent�
 ```
 
 - 本节家长流程的 PDF 和作业附件使用上述 Bearer 鉴权的 POST 二进制流，不通过公开 URL 下载；服务端在返回文件前校验资源状态及访问权限。原学生文章导出接口仍返回公开 URL，不能视为鉴权下载。
-- **历史风险**：现存 `GET /uploads/<name>` 静态挂载不鉴权，历史公开链接仍可被持有者访问；新增鉴权接口并不撤销这些链接或自动保护已有文件，需另行治理存量文件与公开访问。
+- **历史风险**：现存 `GET /homework_api/uploads/<name>` 静态挂载不鉴权，已公开的文件仍可被知晓有效地址者访问；新增鉴权接口并不撤销公开访问或自动保护已有文件，需另行治理存量文件与公开访问。旧地址能否继续访问取决于部署时是否保留映射。
 
 **补充验收**
 

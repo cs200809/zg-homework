@@ -22,9 +22,8 @@ RUN mkdir -p /app/app/data /app/app/uploads
 
 EXPOSE 8000
 
-# /health 是 POST-only（全站 POST-only 设计，见 app/main.py），必须显式指定 method，
-# 否则默认 GET 会拿到 405，容器被永远判定为不健康。
+# 健康检查为 POST-only，必须显式指定 method。
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s \
-    CMD python -c "import urllib.request;urllib.request.urlopen(urllib.request.Request('http://127.0.0.1:8000/health', method='POST'))" || exit 1
+    CMD python -c "import urllib.request;urllib.request.urlopen(urllib.request.Request('http://127.0.0.1:8000/homework_api/health', method='POST'))" || exit 1
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

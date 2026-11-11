@@ -8,7 +8,7 @@
  */
 import axios, { AxiosError } from 'axios'
 
-export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api'
+export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/homework_api'
 
 /** 统一响应结构（PRD 3.1） */
 export interface ApiResponse<T = unknown> {
@@ -102,8 +102,8 @@ export async function post<T = unknown>(
 /**
  * 把服务端返回的相对文件路径拼成可访问的绝对地址（迭代 v2.1）。
  *
- * 开发态走 vite 代理（/api/uploads/... → 服务端 /uploads/...），
- * 生产态 VITE_API_BASE_URL 为绝对域名，同样成立。
+ * 相对路径拼接在 API 基地址后，例如 /uploads/... 对应
+ * /homework_api/uploads/...；绝对 URL 保持不变。
  */
 export function fileUrl(relativePath: string): string {
   if (!relativePath) return ''
