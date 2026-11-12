@@ -4,20 +4,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 仓库形态
 
-本项目分为五个独立仓库，不是一个可整体构建的单体。**当前聚合检出只有 server、web、docs；Android 和 iOS 目录不在本检出中**。本机的移动端独立仓库位于 `../zg-tsp-repos/`，其他环境需先确认其位置。下表描述完整工作区，而非保证所有目录都在当前检出：
+本项目分为三个独立仓库，不是一个可整体构建的单体。**当前聚合检出只有 server、web、docs 三个目录**。微信小程序端是第四个独立仓库，位于 `~/WeChatProjects/HomeworkPoints`，**不在本检出中**。下表描述完整工作区，而非保证所有目录都在当前检出：
 
 | 目录 | 内容 | 技术栈 |
 |------|------|--------|
 | `zg-tsp-server/` | 服务端 | Python 3.12 / FastAPI 0.115 / SQLAlchemy 2.0 / MySQL 8 |
 | `zg-tsp-web/` | Web 管理端 | React 18 / Vite 6 / Ant Design 5 / Zustand 5 |
-| `zg-tsp-android/` `zg-tsp-ios/` | 移动端 | Flutter 3.47 / Dart 3.13（Provider，非 go_router） |
-| `zg-tsp-docs/` | **契约与验收**（PRD、config、ENV_SETUP、验收脚本） | Markdown / Python |
+| `zg-tsp-docs/` | **契约与验收**（PRD、config、验收脚本） | Markdown / Python |
 
-**需求与 API 契约的权威来源是 `zg-tsp-docs/sys_doc/PRD.md`**（v2.1）。它同时承担了 PRD、API 契约、数据库建表 SQL、权限矩阵、验收清单五重角色。改接口前先读它；改完后要同步 `zg-tsp-web/src/api/types.ts` 和 `zg-tsp-*/lib/core/models.dart`（这两份是 PRD 的手工副本，无自动生成）。
+**需求与 API 契约的权威来源是 `zg-tsp-docs/sys_doc/PRD.md`**（v2.2）。它同时承担了 PRD、API 契约、数据库建表 SQL、权限矩阵、验收清单五重角色。改接口前先读它；改完后要同步 `zg-tsp-web/src/api/types.ts`（这份是 PRD 的手工副本，无自动生成）。
 
 ### 三个必须知道的结构性事实
 
-1. **Flutter 两端的 `lib/` 是物理复制的两份**，位于独立的 Android、iOS 仓库，而不是当前聚合检出。两端代码基本相同，**改任何一份都必须检查并手工同步另一份**。
+1. **微信小程序端是第四个独立仓库**，位于 `~/WeChatProjects/HomeworkPoints`，**不在当前聚合检出内**。它是原生小程序（WXML/WXSS/JS），规划与验收见 `zg-tsp-docs/sys_doc/小程序.md`。服务端与 Web 端无需为它做任何改动。
 
 2. **`scripts/dev.sh` 默认优先启动本目录的代码**。有效的 `REPOS_DIR` 优先；否则探测 `$ROOT` → `../zg-tsp-repos` → `~/zg-tsp-repos`。若显式指定或回退到独立仓库，其代码可能与本检出不同步；改完代码后确认运行的是哪一份。
 
@@ -50,6 +49,17 @@ uvicorn app.main:app --host 127.0.0.1 --port 8000
 
 它导入 `zg-tsp-docs/sql/init.sql` —— 该文件由 `python -m app.seed.export_ddl` **从 ORM 生成**（改了 `app/models/entities.py` 要重新生成）。admin 密码以 `__ADMIN_BCRYPT_HASH__` 占位符写入，由脚本运行时替换成 bcrypt 哈希；**直接 `mysql < init.sql` 会导致 admin 无法登录**。
 
+**两条初始化路径的区别**：
+
+| | `scripts/init.sh` | `python -m app.seed.initial_data` |
+|---|---|---|
+| 建表方式 | 导入 `zg-tsp-docs/sql/init.sql` | SQLAlchemy `create_all()` |
+| 数据内容 | 建表 + 积分规则 + admin | 建表 + 积分规则 + admin + 班级 + 4 个测试账号 + 家长绑定 + 成语题库 |
+| 适用场景 | 部署 / 生产 | 本地开发联调 |
+
+两者可共存：先跑 `init.sh`，需要联调数据再跑 `initial_data`
+（它对已存在的表幂等，只补种子）。
+
 **健康检查是 POST，不是 GET**：`curl -X POST http://127.0.0.1:8000/health` 返回统一响应，`data` 含 `status` 和当前 `env`。浏览器直接打开会 405（CORS `allow_methods` 只放行 `POST, OPTIONS`）。
 
 测试（**需要可连的 MySQL**，不 mock、不用 sqlite）：
@@ -76,36 +86,14 @@ npm run preview
 
 **`npm run lint` 当前必然失败**——脚本存在但仓库里没有任何 ESLint 配置文件（无 `.eslintrc*` / `eslint.config.*`）。要修需补 ESLint 8 的 eslintrc 格式配置。Prettier 完全没有，格式化靠手写。
 
-### 移动端
-
-```bash
-cd ../zg-tsp-repos/zg-tsp-android   # 或同级的 zg-tsp-ios；按实际独立仓库位置调整
-flutter pub get
-flutter analyze     # analysis_options.yaml 是 flutter_lints 默认值，零自定义规则
-flutter test        # 仅 test/config_test.dart，6 个离线用例，无 widget/API 测试
-flutter run --dart-define=API_BASE_URL=http://10.0.2.2:8000   # Android 模拟器用 10.0.2.2
-```
-
-打包**必须走 `scripts/build.sh`**，它会先做环境预检并自动注入渠道配置：
-
-```bash
-# 从聚合仓库根目录执行；按实际独立仓库位置调整 REPOS_DIR
-REPOS_DIR="$PWD/../zg-tsp-repos" ./scripts/build.sh android dev --check
-REPOS_DIR="$PWD/../zg-tsp-repos" ./scripts/build.sh android dev   # → APK
-REPOS_DIR="$PWD/../zg-tsp-repos" ./scripts/build.sh android prod  # → AAB
-REPOS_DIR="$PWD/../zg-tsp-repos" ./scripts/build.sh ios dev       # → IPA
-```
-
-构建前确认 `REPOS_DIR` 所指目录确实包含目标移动端；当前聚合检出没有移动端，不能用 `REPOS_DIR="$PWD"` 构建。预检需带平台参数。iOS 签名团队可通过 `DEVELOPMENT_TEAM=<你的 Team ID>` 指定。`build.sh` 默认 dev API 为 `127.0.0.1`、prod 为占位域名 `https://api.example.com`；设置 `API_BASE_URL` 为设备可访问的地址。`dev.sh` 则使用 `API_TARGET`，Android 模拟器访问宿主机通常用 `10.0.2.2`。
-
 ### 顶层运维脚本
 
 ```bash
-./scripts/dev.sh start|server|web|ios|android|all|stop|status|logs
-./scripts/split_repos.sh split|push|status     # subtree 拆分为 5 个独立仓库
+./scripts/dev.sh start|server|web|all|stop|status|logs
+./scripts/split_repos.sh split|push|status     # subtree 拆分为 3 个独立仓库
 ```
 
-`dev.sh` 是 POSIX `sh`（**不能用数组、`[[ ]]`、进程替换**），日志与 PID 落在 `.dev-logs/`。`build.sh` 是 bash 3.2 兼容。**`split_repos.sh split` 会删除已有目标目录后重建；`dev.sh stop` 可能终止占用配置端口的其他进程。**执行前确认目标及影响。`init.sh` 也会自动探测仓库位置，执行前确认 SQL 和数据库来源。
+`dev.sh` 是 POSIX `sh`（**不能用数组、`[[ ]]`、进程替换**），日志与 PID 落在 `.dev-logs/`。**`split_repos.sh split` 会删除已有目标目录后重建；`dev.sh stop` 可能终止占用配置端口的其他进程。**执行前确认目标及影响。`init.sh` 也会自动探测仓库位置，执行前确认 SQL 和数据库来源。
 
 ### 云服务器部署（裸机 systemd + nginx）
 
@@ -157,7 +145,7 @@ ACCEPTANCE_ADMIN_PASSWORD='<admin密码>' python zg-tsp-docs/scripts/acceptance_
 python zg-tsp-docs/scripts/independence_check.py   # 模块独立性静态检查，无需运行时
 ```
 
-`acceptance_check.py` 硬编码 `http://127.0.0.1:8000`，需要管理员密码，会通过真实接口产生持久测试数据并修改积分规则。独立性检查要求五个模块目录同级；当前聚合检出缺少移动端，不能假定该检查完整通过。
+`acceptance_check.py` 硬编码 `http://127.0.0.1:8000`，需要管理员密码，会通过真实接口产生持久测试数据并修改积分规则。独立性检查只覆盖 `zg-tsp-server` 与 `zg-tsp-web` 两个模块，是静态检查、无需服务端运行；微信小程序端不在聚合检出内，不参与该检查。
 
 ## 服务端架构
 
@@ -240,98 +228,47 @@ src/
 
 **部署**：`Dockerfile` 两阶段（node:20-alpine 构建 → nginx:alpine），`nginx.conf` 配了 `location /api/` 反代到 `http://server:8000/`、`client_max_body_size 12m`（作业文件上传）、SPA 回退 `try_files ... /index.html`。`.env.production` 的 baseURL 已是 `/api`，与反代语义一致。仍**没有 docker-compose.yml**，且反代指向的 `server:8000` 无 compose 支撑——Docker 路径需自备 compose；裸机部署走「云服务器部署」一节的 `scripts/package.sh`。
 
-## 移动端架构
-
-```
-lib/
-├── main.dart            RootGate 角色路由守卫 + MaterialApp（内联 Material3 主题）
-├── core/                config.dart（--dart-define）/ models.dart / api_client.dart / apis.dart
-├── state/auth_state.dart  AuthState extends ChangeNotifier（Provider）
-├── pages/               common/ student/ parent/ teacher/ admin/
-└── widgets/common.dart  LoadingView/EmptyView/ErrorView/StatCard/showSnack
-```
-
-- **路由：无 go_router，无 named routes 表**。`MaterialApp` 只有 `home: RootGate`，没有 `routes:`/`onGenerateRoute`，因此**不能用 `Navigator.pushNamed`**（会抛 `Could not find a generator for route`）。页面跳转一律用 `Navigator.push(MaterialPageRoute(...))`。
-- **登录/改密后的跳转由 `RootGate` 自动完成**：`AuthState.login()` / `markPasswordChanged()` 会 `notifyListeners()`，`RootGate`（`main.dart`）`context.watch<AuthState>()` 后按 `user.role` switch 到对应角色首页。页面里**不要**再写 `pushReplacementNamed('/home')` 这类跳转。
-- **角色分流**在 `main.dart` 的 `RootGate`：未登录 → LoginPage；`mustChangePassword` → ChangePasswordPage；否则按 `user.role` switch 到 `StudentHome`/`ParentHome`/`TeacherHome`/`AdminHome`（每个都是 `IndexedStack` + `NavigationBar` 自绘 tab）。用 `ValueKey('${id}:${role}')` 在账号变化时重建，避免沿用上一个角色的导航状态。
-- **API 层自研**：`core/api_client.dart` 单例 + `http` 包（不是 dio），全 POST，`code !== 0` 抛 `ApiException`，网络/超时统一转 `ServiceUnavailableError`。`core/apis.dart` 分 `AuthApi/StudentApi/TeacherApi/ParentApi/AdminApi` 五个单例约 70 个端点。
-- **本地存储**：SharedPreferences 存 `token` 和 `user`（JSON 字符串）。Token 无刷新机制、无过期判断，靠启动时 `/auth/me` 兜底。Web 和移动端启动恢复时，只要 `/auth/me` 失败（包括网络故障）就会清除本地登录信息；运行期间 `ApiClient` **无 401 自动登出**。
-
-### 渠道（flavor）机制
-
-**渠道不由 `pubspec.yaml` 声明**（`flavors:` 不是 pubspec 的合法键，Flutter 从不读它；该键已从两端 pubspec 删除，只留注释说明）。真正的渠道由 `scripts/build.sh` 在打包时**动态改写平台工程**：
-
-- Android：`scripts/lib/android_flavor.py` 往 `build.gradle.kts` 注入 `flavorDimensions` + `productFlavors{dev/prod}`，并注入 `buildFeatures { resValues = true }`（AGP 9.x 默认关闭，否则报错），同时把 `AndroidManifest.xml` 的 `android:label` 改成 `@string/app_name`。
-- iOS：`scripts/lib/ios_flavor.py` 往 `project.pbxproj` 塞 `Debug-Dev`/`Release-Dev`/`Profile-Dev` 三个 XCBuildConfiguration + 生成 `Dev.xcconfig` + 生成 `xcshareddata/xcschemes/Dev.xcscheme`。**scheme 名必须是 `Dev.xcscheme`**（Xcode 用文件名做 scheme 名），且配置模板必须取自 Runner target 而非 RunnerTests。
-
-两个脚本都是幂等的（靠 `ZGTSPFLV` + sha1 派生的固定 object ID），原文件备份为 `*.bak`。
-
-### 版本号
-
-**只在 `pubspec.yaml` 的 `version: 1.0.0+1` 定义**。iOS 的 `Info.plist` 用 `$(FLUTTER_BUILD_NAME)` / `$(FLUTTER_BUILD_NUMBER)`，Xcode 界面上的版本号改了不起作用（Runner target 没有 `MARKETING_VERSION`）。
-
 ## 已知缺陷（已验证，动手前先看这里）
 
 以下都是**已实测确认**的现存问题，不是猜测：
 
 1. **服务端限流未实现**。`app/config.py` 定义了 `register_rate_limit` / `action_rate_limit`，`.env.example` 也配了，但整个 `app/` 里除定义处无第二处引用。
 
-2. **移动端两端 `lib/` 需手工同步**，无 CI 校验（见「仓库形态」第 1 条）。已同步 `login_page.dart`、`student_home.dart`、`main.dart`；`config.dart` 的注释仍各写各的。
+2. **`npm run lint` 必然失败** —— 仓库里没有 ESLint 配置文件（无 `.eslintrc*` / `eslint.config.*`），脚本是空壳。
 
-3. **`npm run lint` 必然失败** —— 仓库里没有 ESLint 配置文件（无 `.eslintrc*` / `eslint.config.*`），脚本是空壳。
+3. **Web 无 401 全局拦截** —— 运行期 token 过期不会自动登出，只在应用启动的 `init()` 里做一次 `/auth/me` 探测。
 
-4. **Web 无 401 全局拦截** —— 运行期 token 过期不会自动登出，只在应用启动的 `init()` 里做一次 `/auth/me` 探测。
+4. **Web 路由无懒加载** —— 页面全静态 import，首屏包含全部页面。
 
-5. **Web 路由无懒加载** —— 页面全静态 import，首屏包含全部页面。
+5. **`api/parent.ts` 里混放了 admin 的全部接口**（invite/user/rule/article/stats），文件职责与命名不符。
 
-6. **`api/parent.ts` 里混放了 admin 的全部接口**（invite/user/rule/article/stats），文件职责与命名不符。
+6. **`.env.production` 与 `nginx.conf` 的 `/api/` 反代语义冲突** —— ~~生产 baseURL 是绝对域名 `https://api.example.com`（占位符）~~ **已修复**：`.env.production` 的 `VITE_API_BASE_URL` 已改为 `/api`，与 nginx 的 `/api/` 反代语义一致。裸机部署见「云服务器部署」一节。仍存留的问题是 **nginx 反代指向的 `server:8000` 无 compose 支撑**（Docker 路径仍需自备 compose）。
 
-7. **`.env.production` 与 `nginx.conf` 的 `/api/` 反代语义冲突** —— ~~生产 baseURL 是绝对域名 `https://api.example.com`（占位符）~~ **已修复**：`.env.production` 的 `VITE_API_BASE_URL` 已改为 `/api`，与 nginx 的 `/api/` 反代语义一致。裸机部署见「云服务器部署」一节。仍存留的问题是 **nginx 反代指向的 `server:8000` 无 compose 支撑**（Docker 路径仍需自备 compose）。
-
-8. **移动端作业附件支持不完整**：独立仓库的 `submitHomework` 接受 `filePath` 但未将其附加到请求，学生端作业提交只传文本。`file_picker` 已用于文章文件选择，不可视为未使用依赖。
-
-9. **`zg-tsp-docs/sys_doc/PRD.md` 2.2.1 与实现仍有出入**：PRD 第 4.1 节的建表 SQL 是 SQLite 方言，权威定义在 `zg-tsp-server/app/models/entities.py`。
+7. **`zg-tsp-docs/sys_doc/PRD.md` 2.2.1 与实现仍有出入**：PRD 第 4.1 节的建表 SQL 是 SQLite 方言，权威定义在 `zg-tsp-server/app/models/entities.py`。
 
 ## 历史修复记录
 
-以下是此前的修复记录；移动端路径指独立仓库，当前聚合检出不包含移动端。实际状态应以正在修改的检出为准：
+以下是此前的修复记录。实际状态应以正在修改的检出为准：
 
-- **移动端 release APK 的 INTERNET 权限**：已在 `zg-tsp-android/android/app/src/main/AndroidManifest.xml` 主清单声明（Flutter 模板只在 `src/debug/`、`src/profile/` 声明，导致 release 包无网络权限）。`aapt2 dump permissions` 实测产物已含 `android.permission.INTERNET`。
-- **移动端登录后崩溃**：原先 `pushReplacementNamed('/home')` / `pushNamed('/register')` / `pushNamed('/homework/${id}')` 在无路由表的 `MaterialApp` 上必抛 `Could not find a generator for route`。现已改为：登录/改密成功后交由 `RootGate` 监听 `AuthState` 自动按角色分流（不再做 Navigator 跳转），注册页与作业详情页改用 `MaterialPageRoute`。
-- **Android release 签名**：`build.gradle.kts` 现从 `android/key.properties` 读取正式签名（模板见 `android/key.properties.example`），文件缺失时**自动回退 debug 签名**（仅内部测试，不可上架）。两条路径均已用临时 keystore 实测通过。
-- **iOS 签名团队**：`build.sh` 支持 `DEVELOPMENT_TEAM` 环境变量，注入渠道 xcconfig（`ios/Flutter/Dev.xcconfig`），三个 `*-Dev` 构建配置同时继承；渠道已配置时也会重新校验更新。
-- **iOS ATS**：`Info.plist` 已对 `localhost` / `127.0.0.1` 开明文 HTTP 豁免（未全局关闭 ATS），并补了 `NSPhotoLibraryUsageDescription` / `NSCameraUsageDescription`。
 - **服务端 Dockerfile HEALTHCHECK**：改为显式 POST 探针（原先用 GET 探 POST-only 的 `/health`，永远 405）。
 - **`.env.example` 的无效 `HOST` / `PORT`**：已删除，改为注明 host/port 由 uvicorn 命令行决定。
 - **PRD 与实现不一致**：PRD 2.1 的 SQLite 已改为 MySQL 8；第 7 节接口清单已补 `POST /games/idiom/question`。
-- **移动端 pubspec**：无效的 `flavors:` 键已删除（Flutter 不读它），改为注释说明真实机制；`sdk` 约束从 `>=3.4.0` 对齐到 `>=3.13.0`；`file_picker` 升到 `^10.3.10`（8.x 的插件 compileSdk 仍是 android-34，会导致 AAR metadata 校验失败、release 构建中断）。
-- **`independence_check.py` 第 6 项**：原先 grep pubspec 的 `flavors:` 键判断双渠道，与真实机制不符，已改为校验 Android `productFlavors{dev,prod}` 与 iOS `ios_flavor.py` 生成器。
 
 ## 本机构建环境
 
-`../zg-tsp-repos/` 是本机五个独立仓库的检出；Android 工程使用以下**国内网络适配**，其他环境应先核实配置：
+`../zg-tsp-repos/` 是本机三个独立仓库的检出。
 
-- `gradle/wrapper/gradle-wrapper.properties`：`distributionUrl` 指向腾讯云镜像（官方地址 307 跳 GitHub 会超时；Gradle 本地缓存按 URL 哈希匹配，换 URL 就要重新下载）
-- `build.gradle.kts` / `settings.gradle.kts`：阿里云 Maven 镜像优先，缺失构件自动回落官方源
+**改动时务必确认使用的是哪份代码**：`scripts/dev.sh` 优先使用有效的 `REPOS_DIR`；
+否则 `dev.sh` 优先 `$ROOT`，再探测 `../zg-tsp-repos` → `~/zg-tsp-repos`。
+`init.sh` 的默认探测顺序**与 `dev.sh` 不同**（它先探 `../zg-tsp-repos`，本快照排其后），
+初始化前确认来源。
+无效或不完整的覆盖值可能回退自动探测；检查脚本输出。
 
-**改动时务必确认使用的是哪份代码**：`scripts/build.sh` 与 `scripts/dev.sh` 优先使用有效的 `REPOS_DIR`；否则 `build.sh` 探测 `../zg-tsp-repos` → `$ROOT` → `~/zg-tsp-repos`，`dev.sh` 则优先 `$ROOT`，再探测 `../zg-tsp-repos` → `~/zg-tsp-repos`。`init.sh` 的默认探测顺序与 `build.sh` 相同，初始化前确认来源。无效或不完整的覆盖值可能回退自动探测；检查脚本输出。当前聚合检出没有移动端，不能直接构建本快照的移动端。
-
-`scripts/dev.sh` 现在会在启动前打印「代码来源与新鲜度报告」（REPOS_DIR 命中哪份代码、五模块 git 状态、与本快照的差异条目数），用它确认跑的是哪一份。
-
-## 独立仓库重建后的 Android 构建（gradlew 已入库）
-
-`scripts/split_repos.sh split` 用 `git subtree split` 重建 `../zg-tsp-repos/`，**被 `.gitignore` 排除的文件不会随重建带过去**。Android 侧的 gradle 包装器三件套已改为**入库**（`android/.gitignore` 移除了 `gradle-wrapper.jar` / `gradlew` / `gradlew.bat` 三行），所以独立仓库 clone 后 Android 构建开箱可用 —— 与 `gradle-wrapper.properties` 本就入库、且 `distributionUrl` 钉腾讯云镜像的做法一致。实测 `flutter create --platforms=android .` 不会改动已存在的这三个文件，不会来回冲突。
-
-仍需 `flutter pub get` 生成的（被 gitignore，属正常）：`.flutter-plugins-dependencies`、`android/app/src/main/java/io/flutter/plugins/GeneratedPluginRegistrant.java`。
-
-两个 `flutter create` 的副作用要留意：
-
-- 它生成的 `test/widget_test.dart` 引用不存在的 `MyApp`（本工程根组件是 `ZgTspApp`），**留着会让 `flutter test` 编译失败**。两端 `.gitignore` 都已加 `test/widget_test.dart`，但文件已存在于工作区时需手动删除。
-- 它触发的 `pub get` 会升级传递依赖（如 `image_picker_ios` 0.8.13+13→+14），与工程改动无关，用 `git checkout -- pubspec.lock` 还原。
+`scripts/dev.sh` 现在会在启动前打印「代码来源与新鲜度报告」（REPOS_DIR 命中哪份代码、各模块 git 状态、与本快照的差异条目数），用它确认跑的是哪一份。
 
 ## Git 约定
 
-- 主分支 `main`。五个独立仓库通过 `git subtree split --prefix=<模块>` 拆出，历史保留在 `split/<模块>` 分支（当前本地无这些分支，需 `split_repos.sh split` 重新生成）。
+- 主分支 `main`。三个独立仓库通过 `git subtree split --prefix=<模块>` 拆出，历史保留在 `split/<模块>` 分支（本地已有 `split/zg-tsp-server`、`split/zg-tsp-web`、`split/zg-tsp-docs`；`split/zg-tsp-android`、`split/zg-tsp-ios` 是移动端下线前的历史留存，可用于恢复）。
 - **服务端测试不入库**：`zg-tsp-server/tests/` 被 gitignore，本地测试属于联调资产，干净检出不一定存在。测试连接真实数据库且可能执行删除，使用专用隔离库。
-- `.dev-logs/`、`/dist/`、`.venv/`、各 `.env`、`*.bak`（脚本注入渠道配置的备份）、`android/key.properties`、`ios/Flutter/{Dev,Prod}.xcconfig` 均不入库。
-- 根 `.claude/settings.local.json` 只有 `permissions.allow` 一个节点（314 条），无 deny/ask/env/hooks/mcpServers 配置。
+- `.dev-logs/`、`/dist/`、`.venv/`、各 `.env` 均不入库。
+- 根 `.claude/settings.local.json` 只有 `permissions.allow` 一个节点，无 deny/ask/env/hooks/mcpServers 配置。
