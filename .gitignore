@@ -8,10 +8,7 @@ __pycache__/
 .dev-logs/
 /dist/
 
-# 服务端测试：统一放在 zg-tsp-server/tests/ 下，不入库。
-# 原因：pytest 直接跑在开发库 zg_tsp 上，只增不删、执行完会在库中留下
-# 真实数据（见 zg-tsp-server/tests/conftest.py 的约定），属于本地联调资产。
-# 本地文件保留，仅从 git 索引移除；新增测试文件请放到该目录下。
-/zg-tsp-server/tests/
+# 服务端本地测试不入库；测试会修改数据库，必须使用隔离库。
+/zg-homework-server/tests/
 /.superpowers/
 /docs/

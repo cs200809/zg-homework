@@ -1,14 +1,18 @@
-# zg-tsp
+# zg-homework
+
+> 注意：根目录 Makefile、运维、打包、部署及验收脚本已移除。下文涉及这些脚本的命令为历史说明，不能执行；服务端和 Web 请分别按各自依赖清单运行。
 
 学习兴趣培养积分系统：服务端、Web 端与文档在同一仓库的三个模块目录中维护。
 
 | 目录 | 内容 | 技术栈 |
 |---|---|---|
-| `zg-tsp-server/` | 服务端 | Python / FastAPI / SQLAlchemy / MySQL 8 |
-| `zg-tsp-web/` | Web 端 | React / Vite / Ant Design |
-| `zg-tsp-docs/` | 契约、配置与验收 | Markdown / Python |
+| `zg-homework-server/` | 服务端 | Python / FastAPI / SQLAlchemy / MySQL 8 |
+| `zg-homework-web/` | Web 端 | React / Vite / Ant Design |
+| `zg-homework-docs/` | 契约、配置与验收 | Markdown / Python |
 
-模块保留各自依赖清单、构建与发布边界。微信小程序是仓外独立仓库，位于 `~/WeChatProjects/HomeworkPoints`，见 [小程序规划](zg-tsp-docs/sys_doc/小程序.md)。需求与接口契约以 [PRD](zg-tsp-docs/sys_doc/PRD.md) 为准。
+**分支与发布约定**：在 `feature/dev_deploy` 分支开发和测试，测试通过后合并到 `main` 主分支；打包和部署均使用 `main` 分支代码。
+
+模块保留各自依赖清单、构建与发布边界。微信小程序是仓外独立仓库，位于 `~/WeChatProjects/HomeworkPoints`，见 [小程序规划](zg-homework-docs/sys_doc/小程序.md)。需求与接口契约以 [PRD](zg-homework-docs/sys_doc/PRD.md) 为准。
 
 ## 快速开始
 
@@ -17,12 +21,12 @@
 ```bash
 # 创建脚本默认使用的根目录虚拟环境，并用同一解释器安装依赖
 python3.12 -m venv .venv
-.venv/bin/python -m pip install -r zg-tsp-server/requirements.txt
-npm --prefix zg-tsp-web install
+.venv/bin/python -m pip install -r zg-homework-server/requirements.txt
+npm --prefix zg-homework-web install
 
 # 首次配置；若 .env 已存在，跳过复制以免覆盖
-cp zg-tsp-server/.env.example zg-tsp-server/.env
-# 编辑 zg-tsp-server/.env：设置 DATABASE_URL、JWT_SECRET
+cp zg-homework-server/.env.example zg-homework-server/.env
+# 编辑 zg-homework-server/.env：设置 DATABASE_URL、JWT_SECRET
 # 确认 MySQL 连接、库名及 SQL 来源均为预期的开发环境后执行
 make db-init
 
@@ -51,12 +55,12 @@ make dev
 
 ## 数据库初始化
 
-`scripts/init.sh` 默认使用本仓库的 `zg-tsp-docs/sql/init.sql` 和 `zg-tsp-server/.env`；可用 `REPOS_DIR` 显式指定其他代码目录，无效时直接报错。初始化会写真实数据库，执行前确认数据库与 SQL 来源；`--drop` 删库且需二次确认。
+`scripts/init.sh` 默认使用本仓库的 `zg-homework-docs/sql/init.sql` 和 `zg-homework-server/.env`；可用 `REPOS_DIR` 显式指定其他代码目录，无效时直接报错。初始化会写真实数据库，执行前确认数据库与 SQL 来源；`--drop` 删库且需二次确认。
 
 SQL 由服务端 `python -m app.seed.export_ddl` 从 ORM 生成。脚本用 `ADMIN_INIT_PASSWORD` 或随机密码替换 admin 哈希占位符；不会覆盖已有正常密码。直接导入未替换的 SQL 不能正常初始化 admin。开发联调种子可用 `python -m app.seed.initial_data`，同样会操作数据库。
 
 ## 文档
 
-- [需求、接口及验收标准](zg-tsp-docs/sys_doc/PRD.md)
-- [环境配置](zg-tsp-docs/sys_doc/config.md)
-- [小程序规划与分期](zg-tsp-docs/sys_doc/小程序.md)：一期学生与家长，老师与 admin 排在二期。
+- [需求、接口及验收标准](zg-homework-docs/sys_doc/PRD.md)
+- [环境配置](zg-homework-docs/sys_doc/config.md)
+- [小程序规划与分期](zg-homework-docs/sys_doc/小程序.md)：一期学生与家长，老师与 admin 排在二期。

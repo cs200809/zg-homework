@@ -1,0 +1,14 @@
+# 运行数据和敏感配置不进入构建上下文
+private_homework/
+app/uploads/
+app/data/
+.env
+.env.*
+!.env.example
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.git/
+tests/
+.pytest_cache/
