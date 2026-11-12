@@ -1,10 +1,9 @@
-"""模块独立性检查（PRD 第 12 节「模块独立性」）。
+"""单仓模块边界检查（PRD 第 12 节「模块边界」）。
 
-静态分析各模块的源码与配置，不依赖运行时。
+静态分析服务端与 Web 的源码和配置，不依赖运行时。
+仓库根目录按脚本自身位置定位，可从任意工作目录运行。
 用法：
     python zg-tsp-docs/scripts/independence_check.py
-
-需在**聚合仓库**（各模块同级检出）下运行；若缺少任一模块则跳过对应检查。
 """
 
 import ast
@@ -71,7 +70,7 @@ def docstring_lines(path: Path) -> set[int]:
 
 
 def main() -> int:
-    print("\n=== 模块独立性检查 ===")
+    print("\n=== 模块边界检查 ===")
 
     # 1. 各模块可单独安装依赖（依赖清单存在且自封闭）
     manifests = {
@@ -156,7 +155,7 @@ def main() -> int:
 
     # ---------- 汇总 ----------
     passed = sum(1 for ok, _, _ in results if ok)
-    print(f"\n=== 独立性检查：{passed}/{len(results)} 通过 ===")
+    print(f"\n=== 模块边界检查：{passed}/{len(results)} 通过 ===")
     failed = [(n, d) for ok, n, d in results if not ok]
     if failed:
         print("\n未通过项：")

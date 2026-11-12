@@ -4,7 +4,7 @@
 
 ## 独立性
 
-本模块**可单独检出、单独启动、单独打包**，不依赖仓库内其他模块：
+当前聚合检出包含 `zg-tsp-server/`、`zg-tsp-web/`、`zg-tsp-docs/` 三个模块；微信小程序是仓外独立仓库。Web 模块也可单独检出、启动和打包，不依赖其他模块源码：
 
 - 与服务端**仅通过 HTTP 接口**通信，不引用服务端源码
 - 依赖自封闭：`package.json` 为唯一依赖清单
@@ -18,7 +18,7 @@
 npm install
 
 # 2. 配置（可选项，仓库内 .env.development 已提供默认值）
-cp .env.example .env.development
+# 按需编辑或使用 .env.local 覆盖，不要覆盖已有配置
 
 # 3. 运行（默认 http://localhost:5173）
 npm run dev
@@ -35,7 +35,7 @@ docker build -t zg-tsp-web:1.0.0 .
 docker run -d -p 8080:80 zg-tsp-web:1.0.0
 ```
 
-`dist/` 可直接部署到任意静态服务器 / 对象存储。
+`dist/` 是静态文件；默认构建使用同域 `/homework_api`，部署时还需将此前缀原样反代到服务端。Docker 内 Nginx 默认指向 `server:8000`，需自行提供可解析的服务端网络。
 
 ## 环境（测试 + 生产）
 
@@ -77,6 +77,22 @@ src/
 | 家长   | `/parent`  | 孩子列表/绑定、积分明细、积分消耗                          |
 
 登录后按角色自动分流；admin 未改密时强制跳转改密页（PRD 5.1）。
+
+## 验收
+
+从聚合仓库根目录运行静态模块独立性检查，无需服务端或数据库：
+
+```bash
+python zg-tsp-docs/scripts/independence_check.py
+```
+
+业务验收需要服务端运行在 `127.0.0.1:8000`，使用已有 admin 密码及装有服务端依赖的 Python：
+
+```bash
+ACCEPTANCE_ADMIN_PASSWORD='<已有 admin 密码>' .venv/bin/python zg-tsp-docs/scripts/acceptance_check.py
+```
+
+业务验收调用真实接口并留下持久数据，应使用隔离环境；脚本不会重置 admin，跳过修改共享积分规则和删除数据的验收项。服务端 pytest 也会写入和可能删除数据，必须指向专用隔离 MySQL 库，详见服务端 README。独立性检查只覆盖 server 和 web，小程序不在本检出内。
 
 ## 开发进度
 
