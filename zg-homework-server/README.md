@@ -35,7 +35,40 @@ curl -X POST http://127.0.0.1:8000/homework_api/health
 # {"code":0,"message":"ok","data":{"status":"ok","env":"dev"}}
 ```
 
-## 打包
+## Linux systemd 运维
+
+`./scripts/server_run.sh check|status|start|stop|restart` 根据脚本位置使用当前服务端目录，不切换检出。`--help` 显示参数。可设置 `SERVER_UNIT`（默认 `zg-homework-server.service`）、`SERVER_PORT`（默认 `8000`）、`SERVER_PYTHON`（默认本模块 `.venv/bin/python`，须为绝对路径）。路径仅支持 ASCII 字母、数字、`_-. /`（不含空格）。脚本本身需要 Python 3，服务端环境需要 Python 3.12+ 和已安装的 Uvicorn。
+
+运维须预先创建并启用 systemd 系统服务，以下示例中的路径和端口须与实际设置完全一致。脚本不安装 unit，也不调用 daemon-reload。
+
+```ini
+[Service]
+Type=simple
+WorkingDirectory=/opt/zg-homework/zg-homework-server
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/opt/zg-homework/zg-homework-server/.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1
+KillMode=control-group
+```
+
+unit 不得有额外 ExecStart 命令、前后置/停止钩子、EnvironmentFile、额外 Environment、PassEnvironment、UnsetEnvironment、PAMName、RootDirectory 或 RootImage；systemd 管理器环境不得包含 `PYTHON*` 或 `UVICORN_*`。通过模块 `.env` 配置生产设置；检查要求显式设置 `ENV=prod`（或 `production`）、`DEBUG=false`、MySQL `DATABASE_URL` 和非默认 `JWT_SECRET`，不会输出值。检查不能证明凭据有效、安全性或 unit 用户可读 `.env`，也不能验证数据库连通；应由运维核对服务用户权限和 systemd 管理器环境。环境变量优先于 `.env`。生产环境必须显式设置 `UPLOAD_DIR` 和 `PRIVATE_HOMEWORK_DIR` 为检出之外的绝对路径，并使用持久存储。按仓库发布约定应从已验证的 `main` 检出部署。
+
+`check` 检查运行时、配置、unit、端口及运行状态；`status` 检查 unit、端口及健康状态，不检查运行时。均不控制服务。已运行的 `start` 是幂等操作，不重新加载源码；更新代码用 `restart`。`stop` 对已停止服务幂等；仅控制经验证的指定 unit，不按端口或名称杀进程。运行中要求主进程的命令、工作目录、cgroup、环境和监听端口符合约定，无法核实时拒绝操作。执行者需有 systemd 控制权限及读取 `/proc` 主进程信息的权限。unit 和代码须由可信管理员管理，执行时不得并发修改配置或另行控制 unit；检查和 systemd 控制之间不是原子操作。
+
+启动前检查 `app/` 中是否存在 `.pyc`/`.pyo` 或符号链接，有则拒绝启动，请运维确认后自行处理，不自动删除。不要让其他工具在检查后向源码写入字节码。每次启动应用的 lifespan 会对实际配置数据库执行 `create_all`；先确认目标库与权限。脚本不执行种子、迁移或删除。就绪检查使用 `POST /homework_api/health`，不保证数据库持续连通。失败返回非零并提示 `journalctl -u UNIT -n 100 --no-pager`；启动失败不会自动停止服务或回滚源码。回退时由运维恢复已验证的源码版本及配置，再运行 `restart`；涉及数据库变更须另行按备份和迁移流程处理。
+
+## 源码部署包
+
+```bash
+./scripts/server_package.sh -o /已有目录/zg-homework-server.tar.gz
+```
+
+打包需要 Python 3。输出路径须位于模块目录之外，且目标文件不能已存在。归档读取脚本所在模块当前工作树，包括未提交源码；不会拉取代码或切换分支。按仓库约定，生产打包应在经验证的 `main` 检出执行，打包期间不要修改源码。
+
+归档包含 `app/` 下的 Python 源码、依赖清单、配置示例、Docker 配置、README 及运行和打包脚本；不包含测试、虚拟环境、缓存、真实 `.env`、公开上传和私有附件。分发前仍需人工检查源码与示例配置是否包含敏感信息。解压到新的目录后安装 Python 依赖，并单独准备生产 `.env`、持久化存储和 systemd 配置。
+
+**注意：** 打包仅收集文件，不验证或修复运行脚本。当前运行脚本仍存在生产安全问题，也尚未完成 Linux/systemd 实机验证；尤其要确保私有附件目录和公开上传目录互不嵌套，完成安全修复和隔离验证后才可生产部署。
+
+## Docker 打包
 
 ```bash
 docker build -t zg-homework-server:1.0.0 .
