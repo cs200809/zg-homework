@@ -1,5 +1,7 @@
 # CLAUDE.md
 
+> 当前仓库已移除根 Makefile、开发/初始化脚本、部署/打包脚本和文档验收脚本。下文提及这些文件的内容属于历史说明，不可执行；请直接使用模块源码和依赖清单。
+
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## 仓库形态
@@ -8,19 +10,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 | 目录 | 内容 | 技术栈 |
 |------|------|--------|
-| `zg-tsp-server/` | 服务端 | Python 3.12 / FastAPI 0.115 / SQLAlchemy 2.0 / MySQL 8 |
-| `zg-tsp-web/` | Web 管理端 | React 18 / Vite 6 / Ant Design 5 / Zustand 5 |
-| `zg-tsp-docs/` | **契约与验收**（PRD、config、验收脚本） | Markdown / Python |
+| `zg-homework-server/` | 服务端 | Python 3.12 / FastAPI 0.115 / SQLAlchemy 2.0 / MySQL 8 |
+| `zg-homework-web/` | Web 管理端 | React 18 / Vite 6 / Ant Design 5 / Zustand 5 |
+| `zg-homework-docs/` | **契约与验收**（PRD、config、验收脚本） | Markdown / Python |
 
-**需求与 API 契约的权威来源是 `zg-tsp-docs/sys_doc/PRD.md`**（v2.3）。它同时承担了 PRD、API 契约、数据库建表 SQL、权限矩阵、验收清单五重角色。改接口前先读它；改完后要同步 `zg-tsp-web/src/api/types.ts`（这份是 PRD 的手工副本，无自动生成）。
+**需求与 API 契约的权威来源是 `zg-homework-docs/sys_doc/PRD.md`**（v2.3）。它同时承担了 PRD、API 契约、数据库建表 SQL、权限矩阵、验收清单五重角色。改接口前先读它；改完后要同步 `zg-homework-web/src/api/types.ts`（这份是 PRD 的手工副本，无自动生成）。
+**分支与发布约定**：在 `feature/dev_deploy` 分支开发和测试，测试通过后合并到 `main` 主分支；打包和部署均使用 `main` 分支代码。
 
 ### 三个必须知道的结构性事实
 
-1. **微信小程序端是仓外独立仓库**，位于 `~/WeChatProjects/HomeworkPoints`，**不在本检出内**。它是原生小程序（WXML/WXSS/JS），规划与验收见 `zg-tsp-docs/sys_doc/小程序.md`。服务端与 Web 端无需为它做任何改动。
+1. **微信小程序端是仓外独立仓库**，位于 `~/WeChatProjects/HomeworkPoints`，**不在本检出内**。它是原生小程序（WXML/WXSS/JS），规划与验收见 `zg-homework-docs/sys_doc/小程序.md`。服务端与 Web 端无需为它做任何改动。
 
 2. **`scripts/dev.sh` 默认启动本仓库的代码**。`REPOS_DIR` 可显式覆盖代码目录，无效时直接报错；使用其他检出时应确认代码来源。
 
-3. **PRD 里的建表 SQL 是 SQLite 方言**，而服务端实际跑 MySQL 8。库表结构以 `zg-tsp-server/app/models/entities.py`（15 张表）为准，PRD 第 4.1 节仅作参考。
+3. **PRD 里的建表 SQL 是 SQLite 方言**，而服务端实际跑 MySQL 8。库表结构以 `zg-homework-server/app/models/entities.py`（15 张表）为准，PRD 第 4.1 节仅作参考。
 
 ## 常用命令
 
@@ -29,7 +32,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ### 服务端
 
 ```bash
-cd zg-tsp-server
+cd zg-homework-server
 pip install -r requirements.txt
 cp .env.example .env            # 按需改 DATABASE_URL / JWT_SECRET
 
@@ -49,13 +52,13 @@ uvicorn app.main:app --host 127.0.0.1 --port 8000
 ./scripts/init.sh --drop     # 先删库重建（危险，需二次确认）
 ```
 
-它导入 `zg-tsp-docs/sql/init.sql` —— 该文件由 `python -m app.seed.export_ddl` **从 ORM 生成**（改了 `app/models/entities.py` 要重新生成）。admin 密码以 `__ADMIN_BCRYPT_HASH__` 占位符写入，由脚本运行时替换成 bcrypt 哈希；**直接 `mysql < init.sql` 会导致 admin 无法登录**。
+它导入 `zg-homework-docs/sql/init.sql` —— 该文件由 `python -m app.seed.export_ddl` **从 ORM 生成**（改了 `app/models/entities.py` 要重新生成）。admin 密码以 `__ADMIN_BCRYPT_HASH__` 占位符写入，由脚本运行时替换成 bcrypt 哈希；**直接 `mysql < init.sql` 会导致 admin 无法登录**。
 
 **两条初始化路径的区别**：
 
 | | `scripts/init.sh` | `python -m app.seed.initial_data` |
 |---|---|---|
-| 建表方式 | 导入 `zg-tsp-docs/sql/init.sql` | SQLAlchemy `create_all()` |
+| 建表方式 | 导入 `zg-homework-docs/sql/init.sql` | SQLAlchemy `create_all()` |
 | 数据内容 | 建表 + 积分规则 + admin | 建表 + 积分规则 + admin + 班级 + 4 个测试账号 + 家长绑定 + 成语题库 |
 | 适用场景 | 部署 / 生产 | 本地开发联调 |
 
@@ -73,12 +76,12 @@ pytest tests/test_auth.py::test_login_success   # 单用例
 pytest -k "login" -x -vv
 ```
 
-测试使用配置的真实 MySQL，会提交数据并调用包括删除在内的业务接口，可能留下数据；**使用专用隔离数据库，不要假定测试只插入或更新**。例如 `DATABASE_URL=mysql+pymysql://.../zg_tsp_other pytest`。`tests/` 被 gitignore，干净检出可能没有测试文件。清理工具有破坏性，先查看 `python -m app.utils.purge_test_data --dry-run` 的结果并确认目标数据库。
+测试使用配置的真实 MySQL，会提交数据并调用包括删除在内的业务接口，可能留下数据；**使用专用隔离数据库，不要假定测试只插入或更新**。例如 `DATABASE_URL=mysql+pymysql://.../zg_homework_other pytest`。`tests/` 被 gitignore，干净检出可能没有测试文件。清理工具有破坏性，先查看 `python -m app.utils.purge_test_data --dry-run` 的结果并确认目标数据库。
 
 ### Web 端
 
 ```bash
-cd zg-tsp-web
+cd zg-homework-web
 npm install        # Node >=20
 npm run dev        # vite --mode development，端口 5173
 npm run build      # = tsc -b && vite build --mode production（含类型检查）
@@ -101,8 +104,8 @@ npm run preview
 服务端与 Web 端各有一个打包脚本，产出可直接上传到云服务器解压安装的 tar.gz：
 
 ```bash
-cd zg-tsp-server && ./scripts/web_package.sh    # → dist/zg-tsp-server-<ver>.tar.gz
-cd zg-tsp-web    && ./scripts/web_package.sh    # → dist/zg-tsp-web-<ver>.tar.gz
+cd zg-homework-server && ./scripts/web_package.sh    # → dist/zg-homework-server-<ver>.tar.gz
+cd zg-homework-web    && ./scripts/web_package.sh    # → dist/zg-homework-web-<ver>.tar.gz
 ```
 
 产物默认写到**仓库根的 `dist/`**（`BUILD_OUTPUT_DIR` 可覆盖；`VERSION` 覆盖版本号）。
@@ -113,11 +116,11 @@ cd zg-tsp-web    && ./scripts/web_package.sh    # → dist/zg-tsp-web-<ver>.tar.
 
 ```bash
 # 服务端
-tar -xzf zg-tsp-server-1.0.0.tar.gz && cd zg-tsp-server-1.0.0
-sudo ./install.sh --database-url "mysql+pymysql://user:pass@host:3306/zg_tsp?charset=utf8mb4" --domain tsp.example.com
+tar -xzf zg-homework-server-1.0.0.tar.gz && cd zg-homework-server-1.0.0
+sudo ./install.sh --database-url "mysql+pymysql://user:pass@host:3306/zg_homework?charset=utf8mb4" --domain tsp.example.com
 
 # Web 端
-tar -xzf zg-tsp-web-1.0.0.tar.gz && cd zg-tsp-web-1.0.0
+tar -xzf zg-homework-web-1.0.0.tar.gz && cd zg-homework-web-1.0.0
 sudo ./install.sh --domain tsp.example.com --api-upstream 127.0.0.1:8000
 ```
 
@@ -130,7 +133,7 @@ sudo ./install.sh --domain tsp.example.com --api-upstream 127.0.0.1:8000
 
 - **systemd 固定单 worker**（`--workers 1`）。成语接龙会话在进程内存里
   （`app/routers/games.py` 的 `SessionStore`），多 worker 会丢会话。
-- **上传数据必须在代码目录之外**（默认 `/var/lib/zg-tsp/`），
+- **上传数据必须在代码目录之外**（默认 `/var/lib/zg-homework/`），
   否则升级覆盖代码时会丢文件。
 - **`db_bootstrap.py` 不依赖 mysql 客户端**（用项目自带的 PyMySQL），
   且幂等：重复执行不重复插入，也**不覆盖已存在的 admin 密码**。
@@ -142,11 +145,11 @@ sudo ./install.sh --domain tsp.example.com --api-upstream 127.0.0.1:8000
 ### 验收
 
 ```bash
-ACCEPTANCE_ADMIN_PASSWORD='<admin密码>' python zg-tsp-docs/scripts/acceptance_check.py  # 需服务端已启动
-python zg-tsp-docs/scripts/independence_check.py   # 模块独立性静态检查，无需运行时
+ACCEPTANCE_ADMIN_PASSWORD='<admin密码>' python zg-homework-docs/scripts/acceptance_check.py  # 需服务端已启动
+python zg-homework-docs/scripts/independence_check.py   # 模块独立性静态检查，无需运行时
 ```
 
-`acceptance_check.py` 硬编码 `http://127.0.0.1:8000`，需要管理员密码，会通过真实接口产生持久测试数据并修改积分规则。独立性检查只覆盖 `zg-tsp-server` 与 `zg-tsp-web` 两个模块，是静态检查、无需服务端运行；微信小程序端不在本检出内，不参与该检查。
+`acceptance_check.py` 硬编码 `http://127.0.0.1:8000`，需要管理员密码，会通过真实接口产生持久测试数据并修改积分规则。独立性检查只覆盖 `zg-homework-server` 与 `zg-homework-web` 两个模块，是静态检查、无需服务端运行；微信小程序端不在本检出内，不参与该检查。
 
 ## 服务端架构
 
@@ -245,7 +248,7 @@ src/
 
 6. **nginx 反代目标无 compose 支撑** —— `.env.production` 的 `VITE_API_BASE_URL=/homework_api` 与 nginx 的 `location /homework_api/` 语义一致（**已修复**）。裸机部署见「云服务器部署」一节。仍存留的问题是 **nginx 反代指向的 `server:8000` 无 compose 支撑**（Docker 路径仍需自备 compose）。
 
-7. **`zg-tsp-docs/sys_doc/PRD.md` 2.2.1 与实现仍有出入**：PRD 第 4.1 节的建表 SQL 是 SQLite 方言，权威定义在 `zg-tsp-server/app/models/entities.py`。
+7. **`zg-homework-docs/sys_doc/PRD.md` 2.2.1 与实现仍有出入**：PRD 第 4.1 节的建表 SQL 是 SQLite 方言，权威定义在 `zg-homework-server/app/models/entities.py`。
 
 ## 历史修复记录
 
@@ -258,6 +261,6 @@ src/
 ## Git 约定
 
 - 主分支 `main`；服务端、Web 和文档在同一仓库中维护。历史拆分分支与其他检出可能仍存在，不应未经确认删除。
-- **服务端测试不入库**：`zg-tsp-server/tests/` 被 gitignore，本地测试属于联调资产，干净检出不一定存在。测试连接真实数据库且可能执行删除，使用专用隔离库。
+- **服务端测试不入库**：`zg-homework-server/tests/` 被 gitignore，本地测试属于联调资产，干净检出不一定存在。测试连接真实数据库且可能执行删除，使用专用隔离库。
 - `.dev-logs/`、`/dist/`、`.venv/`、各 `.env` 均不入库。
 - 根 `.claude/settings.local.json` 只有 `permissions.allow` 一个节点，无 deny/ask/env/hooks/mcpServers 配置。
