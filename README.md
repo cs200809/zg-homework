@@ -2,17 +2,16 @@
 
 学校兴趣培养积分系统 —— 聚合仓库。
 
-> **本仓库已拆分为 5 个独立仓库**（决策 6：四模块拆独立仓库）。
+> **本仓库已拆分为 3 个独立仓库**（决策 6）。
 > 这里的代码是拆分时的**快照**，用于追溯与聚合检出；日常开发请在各自独立仓库进行。
+> 微信小程序端是**第四个独立仓库**，位于本聚合检出之外，规划见 `zg-tsp-docs/sys_doc/小程序.md`。
 
-## 五个独立仓库
+## 独立仓库
 
 | 仓库 | 内容 | 技术栈 |
 |------|------|--------|
 | `zg-tsp-server` | 服务端 | Python 3.12 / FastAPI / SQLAlchemy 2.0 / MySQL 8 |
 | `zg-tsp-web` | Web 管理端 | React 18 / Vite 6 / Ant Design 5 |
-| `zg-tsp-ios` | iOS 移动端 | Flutter 3.47 / Dart 3.13 |
-| `zg-tsp-android` | Android 移动端 | Flutter 3.47 / Dart 3.13 |
 | `zg-tsp-docs` | **文档与契约**（PRD、配置、验收脚本） | Markdown / Python |
 
 各仓库已生成在 `../zg-tsp-repos/`（同级目录），可独立检出、提交、发版。
@@ -24,8 +23,6 @@
 ```bash
 git subtree split --prefix=zg-tsp-server -b split/zg-tsp-server
 git subtree split --prefix=zg-tsp-web    -b split/zg-tsp-web
-git subtree split --prefix=zg-tsp-ios    -b split/zg-tsp-ios
-git subtree split --prefix=zg-tsp-android -b split/zg-tsp-android
 git subtree split --prefix=zg-tsp-docs   -b split/zg-tsp-docs
 ```
 
@@ -40,9 +37,7 @@ git subtree split --prefix=zg-tsp-docs   -b split/zg-tsp-docs
 workspace/
 ├── zg-tsp-docs/       ← 契约与验收脚本
 ├── zg-tsp-server/
-├── zg-tsp-web/
-├── zg-tsp-ios/
-└── zg-tsp-android/
+└── zg-tsp-web/
 ```
 
 ```bash
@@ -89,7 +84,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 
 ## 功能范围
 
-**四角色**（admin / teacher / student / parent）× **两平台**（移动端 + Web）全覆盖。
+**四角色**（admin / teacher / student / parent）× **两平台**（小程序 + Web）全覆盖。
 
 | 模块 | Phase | 状态 |
 |------|-------|------|
@@ -103,7 +98,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 | 服务端 | P5 课后阅读（心跳防挂机） | ✅ |
 | 服务端 | P6 数独 + 成语接龙 + 题库管理 | ✅ |
 | Web | P7 四角色页面 | ✅ |
-| 移动端 | P8 四角色页面（Flutter） | ✅ |
+| 小程序 | P8 四角色页面（原生小程序，独立仓库） | 🔄 一期学生 + 家长 |
 | 全局 | P9 联调验收 | ✅ |
 
 ## 验证状态
@@ -112,9 +107,8 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 |--------|------|
 | 服务端 pytest | 294 passed |
 | PRD 业务验收（第 12 节） | 27/27 |
-| 模块独立性检查 | 10/10 |
+| 模块独立性检查 | 8/8 |
 | Web `tsc` + `vite build` | ✅ |
-| 移动端 `flutter analyze` / `test` | ✅ 两端均无问题 |
 
 ## 文档
 
