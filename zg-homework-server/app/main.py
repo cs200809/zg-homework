@@ -5,7 +5,6 @@
 """
 
 import logging
-from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -43,26 +42,11 @@ logging.basicConfig(
 )
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """启动时确保表存在。
-
-    种子数据由 `python -m app.seed.initial_data` 显式执行（PRD 10.4），
-    不在启动时自动跑，避免生产环境意外写入默认账号。
-    """
-    from app.db.session import engine
-    from app.models.entities import Base
-
-    Base.metadata.create_all(bind=engine)
-    yield
-
-
 API_PREFIX = "/homework_api"
 
 app = FastAPI(
     title=settings.app_name,
     debug=settings.debug,
-    lifespan=lifespan,
     docs_url=f"{API_PREFIX}/docs",
     redoc_url=f"{API_PREFIX}/redoc",
     openapi_url=f"{API_PREFIX}/openapi.json",

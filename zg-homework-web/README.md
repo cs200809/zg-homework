@@ -29,6 +29,7 @@ npm run dev
 ## 源码部署包
 
 ```bash
+./scripts/web_package.sh  # 默认输出到 ../zg-homework-tests/tar/
 ./scripts/web_package.sh -o /已有目录/zg-homework-web.tar.gz
 ```
 

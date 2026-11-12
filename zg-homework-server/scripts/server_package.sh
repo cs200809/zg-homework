@@ -2,6 +2,7 @@
 # Package the current module working tree; no Git operations are performed.
 exec python3 - "$0" "$@" <<'PY'
 import argparse
+from datetime import datetime
 import os
 from pathlib import Path
 import stat
@@ -12,13 +13,27 @@ import tempfile
 MODULE = 'zg-homework-server'
 TREE = 'app'
 FILES = ('requirements.txt', '.env.example', 'Dockerfile', '.dockerignore',
-         'README.md', 'scripts/server_run.sh', 'scripts/server_package.sh')
+         'README.md', 'scripts/server_run.sh', 'scripts/server_package.sh',
+         'scripts/production.env.example', 'scripts/zg-homework-server.service.example')
 SERVER = True
 
-parser = argparse.ArgumentParser(description='Package the current working tree as a deployment source archive. '
-    'Inspect source and example files for secrets before distribution. '
-    'Concurrent source changes cannot be guaranteed to produce a consistent snapshot.')
-parser.add_argument('-o', '--output', required=True, help='new .tar.gz path in an existing directory outside both modules')
+# Translate argparse's standard labels and common argument errors without changing parsing.
+_argparse_messages = {
+    'usage: ': '用法：',
+    'options': '选项',
+    'optional arguments': '可选参数',
+    'show this help message and exit': '显示此帮助信息并退出',
+    '%(prog)s: error: %(message)s\n': '%(prog)s：错误：%(message)s\n',
+    'unrecognized arguments: %s': '无法识别的参数：%s',
+    'expected one argument': '需要一个参数',
+    'argument %(argument_name)s: %(message)s': '参数 %(argument_name)s：%(message)s',
+}
+_original_argparse_gettext = argparse._
+argparse._ = lambda message: _argparse_messages.get(message, _original_argparse_gettext(message))
+parser = argparse.ArgumentParser(description='将当前工作树打包为部署源码归档。'
+    '分发前请检查源码和示例文件中是否包含敏感信息。'
+    '无法保证并发修改源码时生成的快照一致。')
+parser.add_argument('-o', '--output', help='两个模块目录之外的新 .tar.gz 文件路径（默认：zg-homework-tests/tar）')
 args = parser.parse_args(sys.argv[2:])
 root = Path(os.path.abspath(sys.argv[1])).resolve().parent.parent
 
@@ -46,13 +61,13 @@ def signature(st):
 def require_regular(path):
     st = path.lstat()
     if not stat.S_ISREG(st.st_mode):
-        raise ValueError('not a regular file (symlinks are forbidden): ' + str(path))
+        raise ValueError('不是普通文件（禁止使用符号链接）：' + str(path))
     return st
 
 def collect_tree(path, relative, entries):
     before = path.lstat()
     if not stat.S_ISDIR(before.st_mode):
-        raise ValueError('not a directory (symlinks are forbidden): ' + str(path))
+        raise ValueError('不是目录（禁止使用符号链接）：' + str(path))
     entries.append((path, relative, before))
     with os.scandir(path) as scan:
         children = sorted(scan, key=lambda item: item.name)
@@ -69,23 +84,29 @@ def collect_tree(path, relative, entries):
             if not SERVER or child.name.endswith('.py'):
                 entries.append((child_path, child_rel, st))
         else:
-            raise ValueError('symlink or special file in input: ' + str(child_path))
+            raise ValueError('输入中存在符号链接或特殊文件：' + str(child_path))
     if signature(path.lstat()) != signature(before):
-        raise ValueError('input directory changed while collecting: ' + str(path))
+        raise ValueError('收集时输入目录发生变化：' + str(path))
 
 def main():
-    output = Path(args.output).absolute()
+    if args.output:
+        output = Path(args.output).absolute()
+    else:
+        directory = root.parent / 'zg-homework-tests' / 'tar'
+        directory.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now().strftime('%Y%m%d-%H%M%S-%f')
+        output = directory / f'{MODULE}-{timestamp}.tar.gz'
     if output.name in ('', '.', '..') or not output.name.endswith('.tar.gz'):
-        raise ValueError('output must name a new .tar.gz file')
+        raise ValueError('输出必须指定新的 .tar.gz 文件')
     parent = output.parent.resolve(strict=True)
     if not parent.is_dir():
-        raise ValueError('output parent must be an existing directory')
+        raise ValueError('输出文件的父目录必须已存在')
     modules = (root, (root.parent / 'zg-homework-web').resolve())
     if any(parent == module or module in parent.parents for module in modules):
-        raise ValueError('output must be outside both module directories')
+        raise ValueError('输出文件必须位于两个模块目录之外')
     output = parent / output.name
     if os.path.lexists(output):
-        raise FileExistsError('output already exists: ' + str(output))
+        raise FileExistsError('输出文件已存在：' + str(output))
 
     entries = []
     collect_tree(root / TREE, Path(TREE), entries)
@@ -93,7 +114,7 @@ def main():
         path = root / name
         # The fixed scripts directory must not redirect outside the module.
         if '/' in name and not stat.S_ISDIR((root / 'scripts').lstat().st_mode):
-            raise ValueError('scripts must be a real directory')
+            raise ValueError('scripts 必须是真实目录')
         entries.append((path, Path(name), require_regular(path)))
 
     fd, temporary = tempfile.mkstemp(prefix='.package-', suffix='.tmp', dir=parent)
@@ -102,7 +123,7 @@ def main():
             with tarfile.open(fileobj=raw, mode='w:gz', format=tarfile.PAX_FORMAT) as archive:
                 for path, relative, original in entries:
                     if signature(path.lstat()) != signature(original):
-                        raise ValueError('input changed while packaging: ' + str(path))
+                        raise ValueError('打包时输入发生变化：' + str(path))
                     info = tarfile.TarInfo(MODULE + '/' + relative.as_posix())
                     info.mode = stat.S_IMODE(original.st_mode) & 0o777
                     info.mtime = int(original.st_mtime)
@@ -114,23 +135,23 @@ def main():
                         file_fd = os.open(path, flags)
                         with os.fdopen(file_fd, 'rb') as source:
                             if signature(os.fstat(source.fileno())) != signature(original):
-                                raise ValueError('input changed while opening: ' + str(path))
+                                raise ValueError('打开时输入发生变化：' + str(path))
                             info.size = original.st_size
                             archive.addfile(info, source)
                             if signature(os.fstat(source.fileno())) != signature(original):
-                                raise ValueError('input changed while reading: ' + str(path))
+                                raise ValueError('读取时输入发生变化：' + str(path))
             raw.flush()
             os.fsync(raw.fileno())
         # Hard-link publication is atomic and fails if the destination exists.
         os.link(temporary, output)
     finally:
         os.unlink(temporary)
-    print('Created:', output)
-    print('Warning: inspect files for secrets; concurrent changes are not a consistent snapshot.', file=sys.stderr)
+    print('已创建：', output)
+    print('警告：请检查文件中是否包含敏感信息；并发修改时无法保证快照一致。', file=sys.stderr)
 
 try:
     main()
 except (OSError, ValueError, tarfile.TarError) as exc:
-    print('Package failed:', exc, file=sys.stderr)
+    print('打包失败：', exc, file=sys.stderr)
     sys.exit(1)
 PY

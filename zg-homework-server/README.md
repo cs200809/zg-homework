@@ -21,7 +21,8 @@ pip install -r requirements.txt
 cp .env.example .env
 # 设置 DATABASE_URL、JWT_SECRET，生产环境还需检查 CORS_ORIGINS
 
-# 3. 确认目标 MySQL 库后初始化表和联调种子（见下方数据库章节）
+# 3. 仅开发联调：确认目标为隔离 MySQL 库后初始化表和联调种子
+# 此命令创建已知密码的测试账号，不适用于生产环境
 python -m app.seed.initial_data
 
 # 4. 运行
@@ -39,7 +40,23 @@ curl -X POST http://127.0.0.1:8000/homework_api/health
 
 `./scripts/server_run.sh check|status|start|stop|restart` 根据脚本位置使用当前服务端目录，不切换检出。`--help` 显示参数。可设置 `SERVER_UNIT`（默认 `zg-homework-server.service`）、`SERVER_PORT`（默认 `8000`）、`SERVER_PYTHON`（默认本模块 `.venv/bin/python`，须为绝对路径）。路径仅支持 ASCII 字母、数字、`_-. /`（不含空格）。脚本本身需要 Python 3，服务端环境需要 Python 3.12+ 和已安装的 Uvicorn。
 
-运维须预先创建并启用 systemd 系统服务，以下示例中的路径和端口须与实际设置完全一致。脚本不安装 unit，也不调用 daemon-reload。
+归档的 `scripts/production.env.example` 和 `scripts/zg-homework-server.service.example` 提供占位符模板。运维须在确认目标文件不存在或已有配置已备份后，手动复制模板为模块根目录 `.env` 和 `/etc/systemd/system/zg-homework-server.service`，替换全部 `__...__` 占位符，检查文件权限（`.env` 限制为服务账号和管理员可读），并由管理员执行 `systemctl daemon-reload`。打包和运行脚本不会安装或覆盖配置。
+
+例如模块位于 `/data/apps/zg-homework-server` 时，unit 中 `WorkingDirectory` 设置为该路径，Python 设置为该目录下 `.venv/bin/python`，端口设为 `8000`；`.env` 可以使用 `/var/lib/zg-homework/public` 和 `/var/lib/zg-homework/private` 两个互不嵌套的持久目录。MySQL URL 填写专用账号、实际主机和数据库；密码中的 URL 特殊字符需要百分号编码。JWT 应使用独立生成的强随机密钥，不能使用示例值。确保服务账号有目录读写权限，防止路径或符号链接在校验后被改变。
+
+仅供说明的配置格式（其中密码和密钥必须替换，勿将真实凭据提交到仓库）：
+
+```dotenv
+ENV=prod
+DEBUG=false
+DATABASE_URL=mysql+pymysql://homework_user:__DB_PASSWORD__@127.0.0.1:3306/zg_homework?charset=utf8mb4
+JWT_SECRET=__JWT_SECRET__
+CORS_ORIGINS=https://homework.example.com
+UPLOAD_DIR=/var/lib/zg-homework/public
+PRIVATE_HOMEWORK_DIR=/var/lib/zg-homework/private
+```
+
+以下 unit 示例中的路径和端口须与实际设置完全一致；设置其他端口或 Python 路径时，控制脚本的 `SERVER_PORT` 和 `SERVER_PYTHON` 也须匹配。脚本不安装 unit，也不调用 daemon-reload。
 
 ```ini
 [Service]
@@ -54,11 +71,12 @@ unit 不得有额外 ExecStart 命令、前后置/停止钩子、EnvironmentFile
 
 `check` 检查运行时、配置、unit、端口及运行状态；`status` 检查 unit、端口及健康状态，不检查运行时。均不控制服务。已运行的 `start` 是幂等操作，不重新加载源码；更新代码用 `restart`。`stop` 对已停止服务幂等；仅控制经验证的指定 unit，不按端口或名称杀进程。运行中要求主进程的命令、工作目录、cgroup、环境和监听端口符合约定，无法核实时拒绝操作。执行者需有 systemd 控制权限及读取 `/proc` 主进程信息的权限。unit 和代码须由可信管理员管理，执行时不得并发修改配置或另行控制 unit；检查和 systemd 控制之间不是原子操作。
 
-启动前检查 `app/` 中是否存在 `.pyc`/`.pyo` 或符号链接，有则拒绝启动，请运维确认后自行处理，不自动删除。不要让其他工具在检查后向源码写入字节码。每次启动应用的 lifespan 会对实际配置数据库执行 `create_all`；先确认目标库与权限。脚本不执行种子、迁移或删除。就绪检查使用 `POST /homework_api/health`，不保证数据库持续连通。失败返回非零并提示 `journalctl -u UNIT -n 100 --no-pager`；启动失败不会自动停止服务或回滚源码。回退时由运维恢复已验证的源码版本及配置，再运行 `restart`；涉及数据库变更须另行按备份和迁移流程处理。
+启动前检查 `app/` 中是否存在 `.pyc`/`.pyo` 或符号链接，有则拒绝启动，请运维确认后自行处理，不自动删除。不要让其他工具在检查后向源码写入字节码。应用启动不建表、不执行种子或迁移；生产业务使用前须由运维确认数据库目标、备份并单独初始化或迁移表结构。`POST /homework_api/health` 仅检查应用存活，不验证数据库或表结构。失败返回非零并提示 `journalctl -u UNIT -n 100 --no-pager`；启动失败不会自动停止服务或回滚源码。回退时由运维恢复已验证的源码版本及配置，再运行 `restart`；涉及数据库变更须另行按备份和迁移流程处理。
 
 ## 源码部署包
 
 ```bash
+./scripts/server_package.sh  # 默认输出到 ../zg-homework-tests/tar/
 ./scripts/server_package.sh -o /已有目录/zg-homework-server.tar.gz
 ```
 
@@ -96,7 +114,7 @@ docker run -d -p 8000:8000 --env-file .env \
 
 ```
 app/
-├── main.py          应用入口（lifespan 建表 + 统一异常处理）
+├── main.py          应用入口（不自动建表 + 统一异常处理）
 ├── config.py        配置（读 .env）
 ├── db/session.py    引擎与会话（MySQL + 连接池）
 ├── db/repo.py       仓储层（SQLAlchemy 实现）
@@ -132,8 +150,7 @@ python -m app.seed.initial_data
 ```
 
 > 连接配置在 `.env` 的 `DATABASE_URL`。
-> **种子不随服务启动自动执行** —— lifespan 只做 `create_all` 建表（幂等），
-> 避免生产环境意外写入默认账号。
+> **应用启动不自动建表或执行种子。** 生产环境须事先由运维确认目标库、备份并单独准备结构与安全的初始数据；开发种子含已知密码账号，不适用于生产。现有数据库的结构变更须另行迁移。
 
 ### 种子写入的基础数据
 
