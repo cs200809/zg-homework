@@ -1,6 +1,10 @@
 #!/bin/sh
 # zg-tsp 一键启动脚本
 #
+# 本仓库是**单一仓库**：服务端 / Web 端 / 文档同处一个检出。
+# 脚本始终以本仓库为工作目录；如需指向别处检出（如 git worktree），
+# 用 REPOS_DIR 环境变量显式指定。
+#
 # 本脚本刻意保持 POSIX sh 兼容：可用 sh / bash / zsh / dash 执行。
 # 因此不使用 bash 专有语法（数组、< <(...) 进程替换、$'...'、[[ ]] 等）。
 # 唯一非 POSIX 的依赖是 `local` 内建——sh/bash/zsh/dash 均支持，
@@ -16,74 +20,36 @@
 #   ./scripts/dev.sh logs         # 跟随查看日志
 #
 # 环境变量：
-#   REPOS_DIR   仓库所在目录（默认优先使用脚本所在工作区）
+#   REPOS_DIR   代码目录（默认脚本所在仓库；显式指定时必须含 zg-tsp-server 与 zg-tsp-web）
 #   SERVER_PORT 服务端端口（默认 8000）
 #   WEB_PORT    Web 端端口（默认 5173）
 #   API_TARGET  Web 端代理指向的服务端地址（默认 http://127.0.0.1:$SERVER_PORT）
-#   VENV_PY     服务端 Python 解释器（默认 $REPOS_DIR/../zg-tsp/.venv/bin/python）
+#   LOG_DIR     日志目录（默认 <仓库根>/.dev-logs）
+#   VENV_PY     服务端 Python 解释器（默认 <仓库根>/.venv/bin/python，其次 python3）
 
 set -eu
 
 # $0 在 POSIX sh 下即为脚本路径，兼容 bash / dash / zsh。
 #
 # 一律用 `pwd -P` 取**物理路径**：默认的 `pwd` 返回逻辑路径（含符号链接），
-# 当快照目录本身是软链接时，REPOS_DIR 与 ROOT 会因同一物理目录的两条路径
-# 而不相等 —— 明明跑的就是本快照，却被误报成「不同步」。
-# 这比没提示更糟：会让人养成忽略该警告的习惯。
+# 当目录本身是软链接时，REPOS_DIR 与 ROOT 会因同一物理目录的两条路径
+# 而不相等。
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
 ROOT="$(cd "${SCRIPT_DIR}/.." && pwd -P)"
 
-# --- 定位仓库目录 ---
-# POSIX sh 没有数组，改用换行分隔的字符串逐行遍历。
+# --- 定位代码目录 ---
+# 默认就是本仓库。REPOS_DIR 只作**显式覆盖**（git worktree 等场景），
+# 不再自动探测其它检出位置 —— 本仓库是唯一代码来源。
 #
-# 注意：REPOS_DIR 的原始环境变量值单独存到 REPOS_DIR_ENV。
-# 本函数直接写全局变量 REPOS_DIR / REPOS_SOURCE 而非返回值 ——
-# 调用方若用命令替换接收，子 shell 里的赋值会丢失，拿不到来源信息。
-REPOS_DIR_ENV="${REPOS_DIR:-}"
-REPOS_DIR=""
-REPOS_SOURCE=""
-
-find_repos_dir() {
-  local candidates
-  candidates=$(printf '%s\n' \
-    "${REPOS_DIR_ENV}" \
-    "${ROOT}" \
-    "${ROOT}/../zg-tsp-repos" \
-    "${HOME}/zg-tsp-repos"
-  )
-  local d
-  # 用 while read 而非 for 词分割，避免路径含空格时被拆开。
-  while IFS= read -r d; do
-    [ -n "$d" ] || continue
-    if [ -d "$d/zg-tsp-server" ] && [ -d "$d/zg-tsp-web" ]; then
-      REPOS_DIR="$(cd "$d" && pwd -P)"
-      # 显式指定 REPOS_DIR 的优先标记为「环境变量」，
-      # 即使它恰好等于 $ROOT（也即"跑的就是本快照"）。
-      if [ -n "${REPOS_DIR_ENV}" ] && [ "$d" = "${REPOS_DIR_ENV}" ]; then
-        REPOS_SOURCE="环境变量 REPOS_DIR"
-      else
-        case "$d" in
-          "${ROOT}/../zg-tsp-repos") REPOS_SOURCE="默认探测 ../zg-tsp-repos" ;;
-          "${ROOT}")               REPOS_SOURCE="默认探测 本快照 \$ROOT" ;;
-          "${HOME}/zg-tsp-repos")  REPOS_SOURCE="默认探测 ~/zg-tsp-repos" ;;
-          *)                       REPOS_SOURCE="默认探测 未知位置" ;;
-        esac
-      fi
-      return 0
-    fi
-  done <<EOF
-${candidates}
-EOF
-  return 1
-}
-
-find_repos_dir || true
-if [ -z "$REPOS_DIR" ]; then
-  echo "✗ 找不到仓库目录。"
-  echo "  请设置 REPOS_DIR 环境变量，或确保 zg-tsp-server 与 zg-tsp-web 同级存在。"
+# 覆盖值无效时直接报错退出，不静默回退：静默回退会让「跑的是哪份代码」
+# 变得不可知，比报错更糟。
+REPOS_DIR="${REPOS_DIR:-${ROOT}}"
+if [ ! -d "${REPOS_DIR}/zg-tsp-server" ] || [ ! -d "${REPOS_DIR}/zg-tsp-web" ]; then
+  echo "✗ 代码目录无效：${REPOS_DIR}" >&2
+  echo "  需要其中同时存在 zg-tsp-server/ 与 zg-tsp-web/。" >&2
   exit 1
 fi
-REPOS_DIR="$(cd "$REPOS_DIR" && pwd -P)"
+REPOS_DIR="$(cd "${REPOS_DIR}" && pwd -P)"
 
 SERVER_PORT="${SERVER_PORT:-8000}"
 WEB_PORT="${WEB_PORT:-5173}"
@@ -186,144 +152,6 @@ wait_for_port() {
   return 1
 }
 
-# --- 代码来源与新鲜度报告 ---
-
-# 统计差异时排除的路径（依赖 / 构建产物 / 缓存 / .gitignore 排除项）。
-# -x 按条目名匹配，对目录同样生效。
-#
-# 清单逐条对照各模块的 .gitignore 补齐，尤其**签名/密钥类**
-# （*.jks / *.keystore / *.p12 / *.mobileprovision / *.cer 等）：
-# 漏掉它们不只是产生幽灵差异，更会让 diff 把私钥材料读进管道。
-diff_exclude_args() {
-  for x in .git node_modules dist dist-ssr build .dart_tool .gradle .venv venv \
-           __pycache__ .pytest_cache .mypy_cache .ruff_cache htmlcov .coverage \
-           .idea .vscode .DS_Store .dev-logs \
-           tests data uploads Pods .symlinks DerivedData ephemeral xcuserdata \
-           .env .env.local pubspec.lock local.properties key.properties \
-           Dev.xcconfig Prod.xcconfig Generated.xcconfig \
-           flutter_export_environment.sh GeneratedPluginRegistrant.java \
-           GeneratedPluginRegistrant.m GeneratedPluginRegistrant.h \
-           .flutter-plugins .flutter-plugins-dependencies \
-           .vite .kotlin \
-           '*.bak' '*.iml' '*.tsbuildinfo' '*.log' '*.py[cod]' '*.egg-info' \
-           '*.apk' '*.aab' '*.aar' '*.ipa' '*.app' '*.xcuserstate' \
-           '*.jks' '*.keystore' '*.p12' '*.mobileprovision' '*.cer' \
-           '*.certSigningRequest' '*.framework' '*.podspec' \
-           'GoogleService-Info.plist' 'Runner.entitlements.local' \
-           '.packages' '.pub' '.pub-cache' 'debug' 'profile' 'release' \
-           gradlew gradlew.bat gradle-wrapper.jar; do
-    printf -- '-x %s ' "$x"
-  done
-}
-
-# 统计两个目录之间的差异**条目**数（0 表示一致或不存在）。
-# 注意：diff -rq 对「整目录只存在于一侧」只输出一行 `Only in DIR: name`，
-# 所以一个条目可能对应几十个文件 —— 这是「条目数」而非「文件数」。
-count_diff_files() {
-  local a="$1" b="$2" n
-  [ -d "$a" ] && [ -d "$b" ] || { echo 0; return 0; }
-  # 排除清单里含 '*.bak' 之类的通配符，而 diff_exclude_args 的展开是
-  # 未加引号的命令替换 —— 展开结果会再经历一次 pathname expansion，
-  # 按当前工作目录把 '*.bak' 展开成实际文件名，于是 diff 只收到精确
-  # 匹配的那一条排除，其他 .bak 文件重新被计入，且**静默失效不报错**。
-  # 故在这个子 shell 内 set -f 关掉 pathname expansion。
-  # shellcheck disable=SC2086
-  n=$( ( set -f; diff -rq "$a" "$b" $(diff_exclude_args) 2>/dev/null ) | grep -c . || true)
-  [ -n "$n" ] || n=0
-  echo "$n"
-}
-
-# 打印单个模块的 git 状态。
-report_module_git() {
-  local name="$1" dir="$2" branch head tracked untracked top st dircanon
-  if [ ! -d "$dir" ]; then
-    printf '    %-16s %s\n' "$name" "（目录不存在）"
-    return 0
-  fi
-  if ! git -C "$dir" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    printf '    %-16s %s\n' "$name" "（非 git 目录）"
-    return 0
-  fi
-  branch=$(git -C "$dir" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "-")
-  head=$(git -C "$dir" rev-parse --short HEAD 2>/dev/null || echo "-")
-  # git status 只调一次，两次 grep 分别数已跟踪 / 未跟踪。
-  # printf '%s\n' 在 $st 为空时产出一个空行，grep -c . 不计空行，计数仍正确。
-  st=$(git -C "$dir" status --porcelain 2>/dev/null || true)
-  # grep -c 在无匹配时退出码为 1，用 || true 兜住（set -eu 下会直接退出脚本）
-  tracked=$(printf '%s\n' "$st" | grep -v '^??' | grep -c . || true)
-  untracked=$(printf '%s\n' "$st" | grep '^??' | grep -c . || true)
-  [ -n "$tracked" ] || tracked=0
-  [ -n "$untracked" ] || untracked=0
-
-  # 聚合快照形态下，zg-tsp-server/ 等不是独立 git 仓库，
-  # git -C 会向上找到聚合仓库根 —— 各模块的 git 状态其实是同一份。
-  # 不标注的话读者会误以为「每个模块各有 N 个改动」。
-  # 各模块都会命中同样的判定，故只标注一次（避免同一句话刷多行）。
-  if [ "${AGG_NOTE_SHOWN:-0}" != "1" ]; then
-    top=$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null || echo "")
-    if [ -n "$top" ]; then
-      # 两边都规范成**物理路径**再比较：
-      # `git rev-parse --show-toplevel` 返回的是物理路径，
-      # 而 `pwd`（逻辑路径）在软链接下会与它不相等，
-      # 导致独立仓库形态被误标成「非独立仓库（聚合仓库形态）」。
-      top="$(cd "$top" 2>/dev/null && pwd -P)" || top=""
-      dircanon="$(cd "$dir" 2>/dev/null && pwd -P)" || dircanon=""
-      if [ -n "$top" ] && [ -n "$dircanon" ] && [ "$top" != "$dircanon" ]; then
-        printf '    ※ %s\n' "非独立仓库（聚合仓库形态）：以下各模块的 git 状态均取自同一个聚合仓库"
-        AGG_NOTE_SHOWN=1
-      fi
-    fi
-  fi
-
-  if [ "$tracked" = "0" ] && [ "$untracked" = "0" ]; then
-    printf '    %-16s %-8s %-10s %s\n' "$name" "$branch" "$head" "干净"
-  else
-    printf '    %-16s %-8s %-10s %s\n' "$name" "$branch" "$head" \
-      "${tracked} 个已跟踪改动 / ${untracked} 个未跟踪"
-  fi
-}
-
-# 打印整体报告（含与本快照的差异条目数统计）。
-# 只有 REPOS_DIR 与 ROOT 不同时才有「差异」可谈 —— 跑的就是本快照时恒为 0。
-report_source() {
-  local m n total=0
-  echo
-  info "代码来源与新鲜度"
-  printf '  REPOS_DIR = %s\n' "${REPOS_DIR}"
-  printf '  命中来源 = %s\n' "${REPOS_SOURCE:-未知}"
-  # 显式指定的 REPOS_DIR 无效（路径打错 / 不完整）时会静默回落到默认探测，
-  # 而这正是本功能要根治的「跑的是哪份代码」类问题，必须明确告警。
-  if [ -n "${REPOS_DIR_ENV}" ] && [ "${REPOS_SOURCE}" != "环境变量 REPOS_DIR" ]; then
-    warn "你设置的 REPOS_DIR=${REPOS_DIR_ENV} 不存在或不完整，已回落到自动探测"
-  fi
-  if [ "${REPOS_DIR}" != "${ROOT}" ]; then
-    warn "本次选择的是外部仓库，可能与本快照 ${ROOT} 不同步"
-    warn "改动请确认落在哪一份；启动本快照请设置 REPOS_DIR=\"${ROOT}\""
-  else
-    ok "本次选择的是本快照（不代表已运行进程的来源）"
-  fi
-
-  echo "  模块 git 状态："
-  AGG_NOTE_SHOWN=0
-  for m in zg-tsp-server zg-tsp-web zg-tsp-docs; do
-    report_module_git "$m" "${REPOS_DIR}/${m}"
-  done
-
-  if [ "${REPOS_DIR}" != "${ROOT}" ]; then
-    echo "  与本快照的差异："
-    for m in zg-tsp-server zg-tsp-web zg-tsp-docs; do
-      n=$(count_diff_files "${ROOT}/${m}" "${REPOS_DIR}/${m}")
-      total=$((total + n))
-      printf '    %-16s %s 处（差异条目）\n' "$m" "$n"
-    done
-    if [ "$total" -eq 0 ]; then
-      ok "与本快照完全一致"
-    else
-      warn "与本快照有 ${total} 处差异条目"
-    fi
-  fi
-}
-
 # --- 启动各模块 ---
 
 start_server() {
@@ -394,10 +222,10 @@ stop_all() {
       kill "$pid" 2>/dev/null || true
     done
     for _ in 1 2 3 4 5 6 7 8 9 10; do
-      port_busy "${port}" || break
+      port_busy "$port" || break
       sleep 0.3
     done
-    if port_busy "${port}"; then
+    if port_busy "$port"; then
       for pid in $(lsof -ti:"${port}" 2>/dev/null); do
         kill -9 "$pid" 2>/dev/null || true
       done
@@ -444,7 +272,7 @@ tail_logs() {
     return 0
   fi
 
-  # 先读出所有文件路径到位置参数，再交给 tail -f。
+  # 先把日志文件路径都读到位置参数，再交给 tail -f。
   # xargs 把换行转成参数分隔，但含空格的文件名仍会被拆开，
   # 所以这里用 IFS= read 逐行累积到 "$@"。
   local f
@@ -470,15 +298,6 @@ mkdir -p "$LOG_DIR"
 # 因此清空动作推迟到 start_bg 真正拉起进程之前（见 start_bg）。
 
 CMD="${1:-start}"
-
-# 启动类命令与 status 都打完整报告（含与快照差异）——
-# 「现在跑的是哪份代码」是这套脚本要根治的问题，任何时候都该看得见。
-# stop / logs 不打印 —— 它们不启动任何模块，输出会变成噪音。
-case "${CMD}" in
-  start|server|web|all|status)
-    report_source
-    ;;
-esac
 
 case "${CMD}" in
   server)  start_server ;;
