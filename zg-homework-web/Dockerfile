@@ -1,6 +1,6 @@
-# ===== zg-tsp-web 镜像 =====
-# 构建：docker build -t zg-tsp-web:1.0.0 .
-# 运行：docker run -d -p 8080:80 zg-tsp-web:1.0.0
+# ===== zg-homework-web 镜像 =====
+# 构建：docker build -t zg-homework-web:1.0.0 .
+# 运行：docker run -d -p 8080:80 zg-homework-web:1.0.0
 
 # --- 构建阶段 ---
 FROM node:20-alpine AS builder

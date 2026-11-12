@@ -1,5 +1,5 @@
-# ===== zg-tsp-server 镜像 =====
-# 构建：docker build -t zg-tsp-server:1.0.0 .
+# ===== zg-homework-server 镜像 =====
+# 构建：docker build -t zg-homework-server:1.0.0 .
 # 运行及持久化挂卷说明见 README.md。
 
 FROM python:3.12-slim

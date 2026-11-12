@@ -50,8 +50,8 @@
 删除操作不可逆，先确认这���目录没有待保存的工作：
 
 ```bash
-cd /Users/zg/PycharmProjects/zg-tsp
-for d in ../zg-tsp-repos/*/; do
+cd /Users/zg/PycharmProjects/zg-homework
+for d in ../zg-homework-repos/*/; do
   echo "=== $d"
   git -C "$d" status --porcelain
   git -C "$d" log --oneline -1
@@ -65,7 +65,7 @@ Expected: 三段 `===` 之后各自**只有一行 commit 输出**，`status --po
 - [ ] **Step 2: 确认本仓库当前工作区状态**
 
 ```bash
-cd /Users/zg/PycharmProjects/zg-tsp
+cd /Users/zg/PycharmProjects/zg-homework
 git status --short
 git log --oneline -1
 ```
@@ -83,7 +83,7 @@ Expected: `git log` 输出 `bfb8935 docs(spec): 修正设计文档 —— PRD �
 - [ ] **Step 3: 打归档 tag**
 
 ```bash
-cd /Users/zg/PycharmProjects/zg-tsp
+cd /Users/zg/PycharmProjects/zg-homework
 git tag -a archive/pre-merge-2026-11-12 -m "单一仓库化合并前的基线存档"
 git tag -l 'archive/*'
 ```
@@ -93,7 +93,7 @@ Expected: 输出 `archive/pre-merge-2026-11-12`。
 - [ ] **Step 4: 确认 tag 可用**
 
 ```bash
-cd /Users/zg/PycharmProjects/zg-tsp
+cd /Users/zg/PycharmProjects/zg-homework
 git show --stat archive/pre-merge-2026-11-12 | head -5
 ```
 
@@ -148,7 +148,7 @@ done
 
 echo
 echo "[2] REPOS_DIR 无效应报错退出"
-OUT=$(REPOS_DIR=/tmp/definitely-not-zg-tsp ./scripts/dev.sh status 2>&1)
+OUT=$(REPOS_DIR=/tmp/definitely-not-zg-homework ./scripts/dev.sh status 2>&1)
 RC=$?
 if [ "$RC" -ne 0 ]; then
   pass "无效 REPOS_DIR 退出码 $RC（非 0）"
@@ -214,7 +214,7 @@ exit "$FAILED"
 - [ ] **Step 2: 运行冒烟测试，确认它在旧脚本上失败**
 
 ```bash
-cd /Users/zg/PycharmProjects/zg-tsp
+cd /Users/zg/PycharmProjects/zg-homework
 bash docs/test_dev_sh.sh
 ```
 
@@ -228,7 +228,7 @@ Expected: **失败**。旧 `dev.sh` 在 `REPOS_DIR` 指向无效目录时会**�
 
 ```sh
 #!/bin/sh
-# zg-tsp 一键启动脚本
+# zg-homework 一键启动脚本
 #
 # 本仓库是**单一仓库**：服务端 / Web 端 / 文档同处一个检出。
 # 脚本始终以本仓库为工作目录；如需指向别处检出（如 git worktree），
@@ -249,7 +249,7 @@ Expected: **失败**。旧 `dev.sh` 在 `REPOS_DIR` 指向无效目录时会**�
 #   ./scripts/dev.sh logs         # 跟随查看日志
 #
 # 环境变量：
-#   REPOS_DIR   代码目录（默认脚本所在仓库；显式指定时必须含 zg-tsp-server 与 zg-tsp-web）
+#   REPOS_DIR   代码目录（默认脚本所在仓库；显式指定时必须含 zg-homework-server 与 zg-homework-web）
 #   SERVER_PORT 服务端端口（默认 8000）
 #   WEB_PORT    Web 端端口（默认 5173）
 #   API_TARGET  Web 端代理指向的服务端地址（默认 http://127.0.0.1:$SERVER_PORT）
@@ -576,7 +576,7 @@ fi
 - [ ] **Step 4: 保留可执行位**
 
 ```bash
-cd /Users/zg/PycharmProjects/zg-tsp
+cd /Users/zg/PycharmProjects/zg-homework
 chmod +x scripts/dev.sh
 ls -l scripts/dev.sh
 ```
@@ -586,7 +586,7 @@ Expected: `-rwxr-xr-x ... scripts/dev.sh`。
 - [ ] **Step 5: 运行冒烟测试，确认通过**
 
 ```bash
-cd /Users/zg/PycharmProjects/zg-tsp
+cd /Users/zg/PycharmProjects/zg-homework
 bash docs/test_dev_sh.sh
 ```
 
@@ -601,7 +601,7 @@ tail -n 20 .dev-logs/server.log
 - [ ] **Step 6: 提交**
 
 ```bash
-cd /Users/zg/PycharmProjects/zg-tsp
+cd /Users/zg/PycharmProjects/zg-homework
 git add scripts/dev.sh
 git commit -m "refactor(dev): dev.sh 收敛为单仓库形态
 
@@ -647,7 +647,7 @@ Co-Authored-By: Claude <noreply@anthropic.com>"
 
 ```sh
 # --- 定位仓库目录 ---
-# 初始化脚本探测顺序：环境变量 → ../zg-tsp-repos → 本快照 → ~/zg-tsp-repos
+# 初始化脚本探测顺序：环境变量 → ../zg-homework-repos → 本快照 → ~/zg-homework-repos
 # 与 dev.sh 默认顺序不同；使用前须确认 SQL 和数据库来源。
 REPOS_DIR_ENV="${REPOS_DIR:-}"
 REPOS_DIR=""
@@ -692,7 +692,7 @@ REPOS_DIR="$(cd "${REPOS_DIR}" && pwd -P)"
 - [ ] **Step 3: 语法检查**
 
 ```bash
-cd /Users/zg/PycharmProjects/zg-tsp
+cd /Users/zg/PycharmProjects/zg-homework
 for s in sh bash zsh; do printf "%-5s -n init.sh: " "$s"; $s -n scripts/init.sh && echo OK; done
 ```
 
@@ -701,7 +701,7 @@ Expected: 三行 `OK`。
 - [ ] **Step 4: 验证无效 REPOS_DIR 会报错**
 
 ```bash
-cd /Users/zg/PycharmProjects/zg-tsp
+cd /Users/zg/PycharmProjects/zg-homework
 REPOS_DIR=/tmp/nope ./scripts/init.sh --help >/dev/null 2>&1; echo "退出码 $?"
 ```
 
@@ -710,7 +710,7 @@ Expected: 退出码 0 —— `--help` 在参数解析阶段就退出（`exit 0`�
 改用真正会走到定位逻辑的调用（会因找不到 mysql 客户端或库而失败，但错误信息必须是「代码目录无效」）：
 
 ```bash
-cd /Users/zg/PycharmProjects/zg-tsp
+cd /Users/zg/PycharmProjects/zg-homework
 REPOS_DIR=/tmp/nope ./scripts/init.sh 2>&1 | head -3
 ```
 
@@ -721,7 +721,7 @@ Expected: 输出首行为 `✗ 代码目录无效：/tmp/nope`（`die` 走 `err(
 - [ ] **Step 5: 验证默认路径能正确解析出 SQL 文件**
 
 ```bash
-cd /Users/zg/PycharmProjects/zg-tsp
+cd /Users/zg/PycharmProjects/zg-homework
 sh -x scripts/init.sh 2>&1 | grep -E "INIT_SQL=|SERVER_DIR=" | head -4
 ```
 
@@ -730,7 +730,7 @@ Expected: 输出中 `INIT_SQL=` 指向 `<仓库根>/zg-tsp-docs/sql/init.sql`，
 - [ ] **Step 6: 提交**
 
 ```bash
-cd /Users/zg/PycharmProjects/zg-tsp
+cd /Users/zg/PycharmProjects/zg-homework
 git add scripts/init.sh
 git commit -m "refactor(init): init.sh 代码目录定位收敛为单仓库
 
@@ -760,7 +760,7 @@ Co-Authored-By: Claude <noreply@anthropic.com>"
 
 静态分析各模块的源码与配置，不依赖运行时。
 用法：
-    python zg-tsp-docs/scripts/independence_check.py
+    python zg-homework-docs/scripts/independence_check.py
 
 需在**聚合仓库**（各模块同级检出）下运行；若缺少任一模块则跳过对应检查。
 """
@@ -775,7 +775,7 @@ Co-Authored-By: Claude <noreply@anthropic.com>"
 三个模块位于**同一仓库**的独立目录中；本检查确保它们之间不越界。
 
 用法：
-    python zg-tsp-docs/scripts/independence_check.py
+    python zg-homework-docs/scripts/independence_check.py
 
 需在**仓库根**下运行（脚本按自身位置向上两级定位根目录）。
 """
@@ -814,8 +814,8 @@ Co-Authored-By: Claude <noreply@anthropic.com>"
 - [ ] **Step 4: 运行检查，确认 8/8 通过**
 
 ```bash
-cd /Users/zg/PycharmProjects/zg-tsp
-.venv/bin/python zg-tsp-docs/scripts/independence_check.py
+cd /Users/zg/PycharmProjects/zg-homework
+.venv/bin/python zg-homework-docs/scripts/independence_check.py
 ```
 
 Expected:
@@ -833,8 +833,8 @@ Expected:
 - [ ] **Step 5: 确认脚本内无残留的「独立仓库」措辞**
 
 ```bash
-cd /Users/zg/PycharmProjects/zg-tsp
-grep -n "独立仓库\|聚合" zg-tsp-docs/scripts/independence_check.py
+cd /Users/zg/PycharmProjects/zg-homework
+grep -n "独立仓库\|聚合" zg-homework-docs/scripts/independence_check.py
 ```
 
 Expected: 无输出。
@@ -842,8 +842,8 @@ Expected: 无输出。
 - [ ] **Step 6: 提交**
 
 ```bash
-cd /Users/zg/PycharmProjects/zg-tsp
-git add zg-tsp-docs/scripts/independence_check.py
+cd /Users/zg/PycharmProjects/zg-homework
+git add zg-homework-docs/scripts/independence_check.py
 git commit -m "refactor(docs): independence_check 改为模块边界检查语义
 
 检查项实质与判定逻辑全部保留，仅改标题、文案与文档字符串；
@@ -937,7 +937,7 @@ clean-logs: ## 清空 .dev-logs
 - [ ] **Step 2: 验证 `make help`**
 
 ```bash
-cd /Users/zg/PycharmProjects/zg-tsp
+cd /Users/zg/PycharmProjects/zg-homework
 make help
 ```
 
@@ -948,7 +948,7 @@ Expected: 输出标题行 + 目标列表（`dev`、`server`、`web`、`stop`、`
 - [ ] **Step 3: 验证 `make status` 能透传到 dev.sh**
 
 ```bash
-cd /Users/zg/PycharmProjects/zg-tsp
+cd /Users/zg/PycharmProjects/zg-homework
 make status
 ```
 
@@ -957,7 +957,7 @@ Expected: 输出含「模块运行状态」与「服务端 / Web 端」两行。
 - [ ] **Step 4: 验证 `make check` 的前半段（模块边界检查）能跑通**
 
 ```bash
-cd /Users/zg/PycharmProjects/zg-tsp
+cd /Users/zg/PycharmProjects/zg-homework
 make -n check
 ```
 
@@ -971,7 +971,7 @@ cd /Users/zg/PycharmProjects/zg-tsp && /Users/zg/PycharmProjects/zg-tsp/.venv/bi
 - [ ] **Step 5: 验证 `make build`**
 
 ```bash
-cd /Users/zg/PycharmProjects/zg-tsp
+cd /Users/zg/PycharmProjects/zg-homework
 make build 2>&1 | tail -15
 ```
 
@@ -980,7 +980,7 @@ Expected: `tsc -b && vite build` 成功，输出 `✓ built in ...`。退出码 
 - [ ] **Step 6: 提交**
 
 ```bash
-cd /Users/zg/PycharmProjects/zg-tsp
+cd /Users/zg/PycharmProjects/zg-homework
 git add Makefile
 git commit -m "feat(make): 新增根级 Makefile 统一入口
 
@@ -1004,7 +1004,7 @@ Co-Authored-By: Claude <noreply@anthropic.com>"
 - [ ] **Step 1: 确认没有其它文件引用它**
 
 ```bash
-cd /Users/zg/PycharmProjects/zg-tsp
+cd /Users/zg/PycharmProjects/zg-homework
 grep -rn "split_repos" . --exclude-dir=.git --exclude-dir=node_modules --exclude-dir=superpowers --exclude-dir=docs
 ```
 
@@ -1015,14 +1015,14 @@ Expected: 输出会列出 `CLAUDE.md`、`README.md`、`zg-tsp-docs/README.md`、
 - [ ] **Step 2: 删除文件**
 
 ```bash
-cd /Users/zg/PycharmProjects/zg-tsp
+cd /Users/zg/PycharmProjects/zg-homework
 git rm scripts/split_repos.sh
 ```
 
 - [ ] **Step 3: 提交**
 
 ```bash
-cd /Users/zg/PycharmProjects/zg-tsp
+cd /Users/zg/PycharmProjects/zg-homework
 git commit -m "chore: 移除 split_repos.sh 拆分脚本
 
 单一仓库形态下不再需要 subtree 拆分流程。四个 split/* 分支与
@@ -1097,14 +1097,14 @@ curl -X POST http://127.0.0.1:8000/homework_api/health
 
 ```bash
 # 终端 1：服务端
-cd zg-tsp-server && uvicorn app.main:app --host 127.0.0.1 --port 8000
+cd zg-homework-server && uvicorn app.main:app --host 127.0.0.1 --port 8000
 
 # 终端 2：Web 端（Vite 代理 /homework_api → 127.0.0.1:8000，保留前缀）
-cd zg-tsp-web && npm run dev
+cd zg-homework-web && npm run dev
 
 # 终端 3：验收脚本
-python zg-tsp-docs/scripts/independence_check.py
-python zg-tsp-docs/scripts/acceptance_check.py
+python zg-homework-docs/scripts/independence_check.py
+python zg-homework-docs/scripts/acceptance_check.py
 ```
 
 ## 数据库初始化
@@ -1170,7 +1170,7 @@ Expected: 只允许出现「仓外独立仓库」（指小程序端）这一类*
 - [ ] **Step 3: 验证 Makefile 目标在 README 中都有对应**
 
 ```bash
-cd /Users/zg/PycharmProjects/zg-tsp
+cd /Users/zg/PycharmProjects/zg-homework
 for t in dev server web stop status logs db-init test build check; do
   grep -q "make $t" README.md && echo "  ✓ $t" || echo "  ✗ $t 缺失"
 done
@@ -1181,7 +1181,7 @@ Expected: 11 行全部 `✓`。
 - [ ] **Step 4: 提交**
 
 ```bash
-cd /Users/zg/PycharmProjects/zg-tsp
+cd /Users/zg/PycharmProjects/zg-homework
 git add README.md
 git commit -m "docs(readme): 根 README 改为单仓库口径
 
@@ -1305,8 +1305,8 @@ Expected: 只允许「仓外独立仓库」（指小程序端）与「只读或�
 - [ ] **Step 3: 提交**
 
 ```bash
-cd /Users/zg/PycharmProjects/zg-tsp
-git add zg-tsp-docs/README.md
+cd /Users/zg/PycharmProjects/zg-homework
+git add zg-homework-docs/README.md
 git commit -m "docs(docs): zg-tsp-docs README 改为单仓库口径
 
 删除「三个模块仓库」「聚合检出」表述，改为单仓三模块目录 + 仓外小程序端。
@@ -1471,7 +1471,7 @@ make check     # 模块边界检查 + 业务验收（验收需服务端已启动
 同时检查全文是否还有指向当前 PRD 版本的引用：
 
 ```bash
-cd /Users/zg/PycharmProjects/zg-tsp
+cd /Users/zg/PycharmProjects/zg-homework
 grep -n "PRD.md.*v2\.\|PRD（v2\." CLAUDE.md
 ```
 
@@ -1480,7 +1480,7 @@ Expected: 所有指向**当前**版本的引用都是 v2.3。「历史修复记�
 - [ ] **Step 8: 更新「已知缺陷」第 6 条（若提到聚合/独立仓）**
 
 ```bash
-cd /Users/zg/PycharmProjects/zg-tsp
+cd /Users/zg/PycharmProjects/zg-homework
 grep -n "聚合\|独立仓库\|zg-tsp-repos\|split" CLAUDE.md
 ```
 
@@ -1489,7 +1489,7 @@ Expected: 只剩 Step 5/6 改写后允许的「仓外独立仓库」「移动端
 - [ ] **Step 9: 提交**
 
 ```bash
-cd /Users/zg/PycharmProjects/zg-tsp
+cd /Users/zg/PycharmProjects/zg-homework
 git add CLAUDE.md
 git commit -m "docs(claude): CLAUDE.md 改为单仓库形态
 
@@ -1701,8 +1701,8 @@ zg-tsp/                               # 单一仓库，三个模块目录
 - [ ] **Step 10: 全文扫描残留**
 
 ```bash
-cd /Users/zg/PycharmProjects/zg-tsp
-grep -n "聚合检出\|聚合仓库\|第四个独立仓库\|独立 git 仓库\|非 monorepo\|拆分独立仓库\|各仓库以其为准" zg-tsp-docs/sys_doc/PRD.md
+cd /Users/zg/PycharmProjects/zg-homework
+grep -n "聚合检出\|聚合仓库\|第四个独立仓库\|独立 git 仓库\|非 monorepo\|拆分独立仓库\|各仓库以其为准" zg-homework-docs/sys_doc/PRD.md
 ```
 
 Expected: 无输出。
@@ -1712,8 +1712,8 @@ Expected: 无输出。
 - [ ] **Step 11: 确认版本号一致**
 
 ```bash
-cd /Users/zg/PycharmProjects/zg-tsp
-grep -n "v2\.2\|v2\.3" zg-tsp-docs/sys_doc/PRD.md | head -10
+cd /Users/zg/PycharmProjects/zg-homework
+grep -n "v2\.2\|v2\.3" zg-homework-docs/sys_doc/PRD.md | head -10
 ```
 
 Expected: 标题为 `v2.3`；§0 变更记录含 `### v2.3（单一仓库化）`；§0 里 v2.2 的历史条目保留（那是历史记录，不该删）。其它正文若引用 PRD 版本号，同步改为 v2.3。
@@ -1721,8 +1721,8 @@ Expected: 标题为 `v2.3`；§0 变更记录含 `### v2.3（单一仓库化）`
 - [ ] **Step 12: 提交**
 
 ```bash
-cd /Users/zg/PycharmProjects/zg-tsp
-git add zg-tsp-docs/sys_doc/PRD.md
+cd /Users/zg/PycharmProjects/zg-homework
+git add zg-homework-docs/sys_doc/PRD.md
 git commit -m "docs(prd): PRD 升 v2.3，决策 6 改为单仓三模块目录
 
 仓库形态从「拆分为独立仓库」改为「同一仓库的独立目录」，模块边界六条
@@ -1809,8 +1809,8 @@ Co-Authored-By: Claude <noreply@anthropic.com>"
 - [ ] **Step 5: 扫描残留**
 
 ```bash
-cd /Users/zg/PycharmProjects/zg-tsp
-grep -n "聚合检出\|三仓\|split_repos\|聚合仓库" zg-tsp-docs/sys_doc/小程序.md
+cd /Users/zg/PycharmProjects/zg-homework
+grep -n "聚合检出\|三仓\|split_repos\|聚合仓库" zg-homework-docs/sys_doc/小程序.md
 ```
 
 Expected: 无输出。
@@ -1818,8 +1818,8 @@ Expected: 无输出。
 - [ ] **Step 6: 提交**
 
 ```bash
-cd /Users/zg/PycharmProjects/zg-tsp
-git add zg-tsp-docs/sys_doc/小程序.md
+cd /Users/zg/PycharmProjects/zg-homework
+git add zg-homework-docs/sys_doc/小程序.md
 git commit -m "docs(小程序): 同步单仓库形态措辞
 
 仓库归属决策改为「仓外独立仓库」，删除对 split_repos.sh 与三仓结构的引用。
@@ -1842,8 +1842,8 @@ Co-Authored-By: Claude <noreply@anthropic.com>"
 - [ ] **Step 1: 再次确认三个独立检出无未提交改动**（删除前最后一道闸）
 
 ```bash
-cd /Users/zg/PycharmProjects/zg-tsp
-for d in ../zg-tsp-repos/*/; do
+cd /Users/zg/PycharmProjects/zg-homework
+for d in ../zg-homework-repos/*/; do
   echo "=== $d"
   git -C "$d" status --porcelain
 done
@@ -1856,7 +1856,7 @@ Expected: 三段 `===`，其后**无任何输出**。
 - [ ] **Step 2: 确认归档 tag 存在且指向合并前基线**
 
 ```bash
-cd /Users/zg/PycharmProjects/zg-tsp
+cd /Users/zg/PycharmProjects/zg-homework
 git rev-parse archive/pre-merge-2026-11-12
 git log --oneline -1 archive/pre-merge-2026-11-12
 ```
@@ -1866,7 +1866,7 @@ Expected: 第二行输出 `bfb8935 docs(spec): 修正设计文档 —— PRD 章
 - [ ] **Step 3: 列出待删分支**
 
 ```bash
-cd /Users/zg/PycharmProjects/zg-tsp
+cd /Users/zg/PycharmProjects/zg-homework
 git branch --list 'split/*'
 ```
 
@@ -1885,9 +1885,9 @@ Expected: 恰好 5 行：
 - [ ] **Step 4: 删除五个分支**
 
 ```bash
-cd /Users/zg/PycharmProjects/zg-tsp
-git branch -D split/zg-tsp-server split/zg-tsp-web split/zg-tsp-docs \
-                split/zg-tsp-android split/zg-tsp-ios
+cd /Users/zg/PycharmProjects/zg-homework
+git branch -D split/zg-homework-server split/zg-homework-web split/zg-homework-docs \
+                split/zg-homework-android split/zg-homework-ios
 ```
 
 Expected: 每行 `Deleted branch split/... (was <sha>)`。
@@ -1895,7 +1895,7 @@ Expected: 每行 `Deleted branch split/... (was <sha>)`。
 - [ ] **Step 5: 确认分支已删**
 
 ```bash
-cd /Users/zg/PycharmProjects/zg-tsp
+cd /Users/zg/PycharmProjects/zg-homework
 git branch --list 'split/*'
 git branch -a
 ```
@@ -1905,9 +1905,9 @@ Expected: 第一条无输出；第二条只剩 `* main` 与 `archive/pre-merge-2
 - [ ] **Step 6: 删除 `../zg-tsp-repos/` 目录**
 
 ```bash
-ls -la ../zg-tsp-repos/
-rm -rf ../zg-tsp-repos/
-ls -d ../zg-tsp-repos 2>&1
+ls -la ../zg-homework-repos/
+rm -rf ../zg-homework-repos/
+ls -d ../zg-homework-repos 2>&1
 ```
 
 Expected: 最后一行 `ls: ../zg-tsp-repos: No such file or directory`（退出码非 0，属预期）。
@@ -1917,7 +1917,7 @@ Expected: 最后一行 `ls: ../zg-tsp-repos: No such file or directory`（退出
 - [ ] **Step 7: 确认 `main` 历史仍完整**
 
 ```bash
-cd /Users/zg/PycharmProjects/zg-tsp
+cd /Users/zg/PycharmProjects/zg-homework
 git log --oneline | wc -l
 git log --oneline -3
 ```
@@ -1927,7 +1927,7 @@ Expected: 提交数 **不少于** 合并前的数量（本计划执行前为 18 
 - [ ] **Step 8: 提交归档 tag**
 
 ```bash
-cd /Users/zg/PycharmProjects/zg-tsp
+cd /Users/zg/PycharmProjects/zg-homework
 git tag -a archive/pre-merge-2026-11-12 -m "单一仓库化合并前的基线存档" 2>/dev/null || echo "tag 已存在，跳过"
 git tag -l
 ```
@@ -1948,7 +1948,7 @@ Expected: `archive/pre-merge-2026-11-12` 与 `main`。
 - [ ] **Step 1: 全仓扫描残留引用**
 
 ```bash
-cd /Users/zg/PycharmProjects/zg-tsp
+cd /Users/zg/PycharmProjects/zg-homework
 grep -rn "split_repos\|zg-tsp-repos\|聚合检出\|聚合仓库\|第四个独立仓库\|独立 git 仓库" . \
   --exclude-dir=.git --exclude-dir=node_modules --exclude-dir=superpowers --exclude-dir=docs --exclude-dir=dist
 ```
@@ -1960,7 +1960,7 @@ Expected: **无输出**。
 另需单独确认两个**已核对为干净**的文件（实施时复核一次即可）：
 
 ```bash
-grep -n "仓库\|聚合\|独立仓库" zg-tsp-docs/sys_doc/config.md zg-tsp-docs/sys_doc/迭代.md
+grep -n "仓库\|聚合\|独立仓库" zg-homework-docs/sys_doc/config.md zg-homework-docs/sys_doc/迭代.md
 ```
 
 Expected: 无输出（这两个文件不含仓库形态表述，无需改动）。
@@ -1968,7 +1968,7 @@ Expected: 无输出（这两个文件不含仓库形态表述，无需改动）�
 - [ ] **Step 2: 模块边界检查**
 
 ```bash
-cd /Users/zg/PycharmProjects/zg-tsp
+cd /Users/zg/PycharmProjects/zg-homework
 make check 2>&1 | tail -30
 ```
 
@@ -1981,7 +1981,7 @@ Expected: `=== 独立性检查：8/8 通过 ===`（或「模块边界检查：8/
 - [ ] **Step 3: 服务端可启动**
 
 ```bash
-cd /Users/zg/PycharmProjects/zg-tsp
+cd /Users/zg/PycharmProjects/zg-homework
 make server
 sleep 3
 curl -s -X POST http://127.0.0.1:8000/homework_api/health
@@ -1992,7 +1992,7 @@ Expected: `{"code":0,"message":"ok","data":{"status":"ok","env":"..."}}`
 - [ ] **Step 4: Web 可构建**
 
 ```bash
-cd /Users/zg/PycharmProjects/zg-tsp
+cd /Users/zg/PycharmProjects/zg-homework
 make build 2>&1 | tail -8
 ```
 
@@ -2001,7 +2001,7 @@ Expected: `✓ built in ...`，退出码 0。
 - [ ] **Step 5: 两端可联调**
 
 ```bash
-cd /Users/zg/PycharmProjects/zg-tsp
+cd /Users/zg/PycharmProjects/zg-homework
 make web
 sleep 5
 curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:5173/
@@ -2013,7 +2013,7 @@ Expected: 第一行 `200`（SPA 首页）；第二行 `200`（代理保留前缀
 - [ ] **Step 6: 停止全部**
 
 ```bash
-cd /Users/zg/PycharmProjects/zg-tsp
+cd /Users/zg/PycharmProjects/zg-homework
 make stop
 sleep 1
 make status
@@ -2024,7 +2024,7 @@ Expected: `status` 显示两个模块均「未运行」。
 - [ ] **Step 7: 确认工作区干净**
 
 ```bash
-cd /Users/zg/PycharmProjects/zg-tsp
+cd /Users/zg/PycharmProjects/zg-homework
 git status --short
 ```
 
@@ -2033,7 +2033,7 @@ Expected: 只剩 Task 1 记录过的那些**未跟踪**文件（`zg-tsp-server/d
 - [ ] **Step 8: 记录验证结论**
 
 ```bash
-cd /Users/zg/PycharmProjects/zg-tsp
+cd /Users/zg/PycharmProjects/zg-homework
 git log --oneline -12
 ```
 
@@ -2048,17 +2048,17 @@ Expected: 11 条本次提交（Task 2-11）+ 2 条 spec 提交。
 任一环节出问题，按以下顺序回滚：
 
 ```bash
-cd /Users/zg/PycharmProjects/zg-tsp
+cd /Users/zg/PycharmProjects/zg-homework
 
 # 1. 回到合并前的基线
 git reset --hard archive/pre-merge-2026-11-12
 
 # 2. 恢复被删的 split 分支（对象仍在 reflog / tag 里）
-git branch split/zg-tsp-server archive/pre-merge-2026-11-12
+git branch split/zg-homework-server archive/pre-merge-2026-11-12
 # …其余分支同理
 
 # 3. 恢复独立检出（若已删）
-git clone -b split/zg-tsp-server /Users/zg/PycharmProjects/zg-tsp ../zg-tsp-repos/zg-tsp-server
+git clone -b split/zg-homework-server /Users/zg/PycharmProjects/zg-homework ../zg-homework-repos/zg-homework-server
 ```
 
 注意：`git reset --hard` 会丢弃工作区改动，执行前先确认无需要保留的内容。
