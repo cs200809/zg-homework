@@ -10,8 +10,6 @@
 #   ./scripts/dev.sh              # 启动 server + web（默认）
 #   ./scripts/dev.sh server       # 只启动服务端
 #   ./scripts/dev.sh web          # 只启动 Web 端
-#   ./scripts/dev.sh ios          # 启动 iOS 端（需 Xcode + 已连接设备或模拟器）
-#   ./scripts/dev.sh android      # 启动 Android 端（需 Android SDK + 设备/模拟器）
 #   ./scripts/dev.sh all          # 启动全部
 #   ./scripts/dev.sh stop         # 停止本脚本启动的所有进程
 #   ./scripts/dev.sh status       # 查看各模块运行状态
@@ -23,7 +21,6 @@
 #   WEB_PORT    Web 端端口（默认 5173）
 #   API_TARGET  Web 端代理指向的服务端地址（默认 http://127.0.0.1:$SERVER_PORT）
 #   VENV_PY     服务端 Python 解释器（默认 $REPOS_DIR/../zg-tsp/.venv/bin/python）
-#   DEVICE_ID   移动端设备 ID（默认自动探测真机/模拟器）
 
 set -eu
 
@@ -82,7 +79,7 @@ EOF
 
 find_repos_dir || true
 if [ -z "$REPOS_DIR" ]; then
-  echo "✗ 找不到五个仓库目录。"
+  echo "✗ 找不到仓库目录。"
   echo "  请设置 REPOS_DIR 环境变量，或确保 zg-tsp-server 与 zg-tsp-web 同级存在。"
   exit 1
 fi
@@ -150,7 +147,7 @@ start_bg() {
   # 否则 $! 指向的是会立刻退出的 subshell，记录下来就停不掉。
   #
   # BG_ENV 若非空，会以 `env <VAR=VAL>...` 的形式前置到命令前。
-  # 不能写成 `ANDROID_HOME=x exec flutter ...`——exec 的前置赋值会被
+  # 不能写成 `FOO=bar exec cmd ...`——exec 的前置赋值会被
   # 当成可执行文件名，所以这里统一走 env 命令。
   if [ -n "${BG_ENV:-}" ]; then
     # shellcheck disable=SC2086
@@ -194,7 +191,7 @@ wait_for_port() {
 # 统计差异时排除的路径（依赖 / 构建产物 / 缓存 / .gitignore 排除项）。
 # -x 按条目名匹配，对目录同样生效。
 #
-# 清单逐条对照五个模块的 .gitignore 补齐，尤其**签名/密钥类**
+# 清单逐条对照各模块的 .gitignore 补齐，尤其**签名/密钥类**
 # （*.jks / *.keystore / *.p12 / *.mobileprovision / *.cer 等）：
 # 漏掉它们不只是产生幽灵差异，更会让 diff 把私钥材料读进管道。
 diff_exclude_args() {
@@ -259,9 +256,9 @@ report_module_git() {
   [ -n "$untracked" ] || untracked=0
 
   # 聚合快照形态下，zg-tsp-server/ 等不是独立 git 仓库，
-  # git -C 会向上找到聚合仓库根 —— 五个模块的 git 状态其实是同一份。
+  # git -C 会向上找到聚合仓库根 —— 各模块的 git 状态其实是同一份。
   # 不标注的话读者会误以为「每个模块各有 N 个改动」。
-  # 五个模块都会命中同样的判定，故只标注一次（避免同一句话刷五行）。
+  # 各模块都会命中同样的判定，故只标注一次（避免同一句话刷多行）。
   if [ "${AGG_NOTE_SHOWN:-0}" != "1" ]; then
     top=$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null || echo "")
     if [ -n "$top" ]; then
@@ -308,13 +305,13 @@ report_source() {
 
   echo "  模块 git 状态："
   AGG_NOTE_SHOWN=0
-  for m in zg-tsp-server zg-tsp-web zg-tsp-android zg-tsp-ios zg-tsp-docs; do
+  for m in zg-tsp-server zg-tsp-web zg-tsp-docs; do
     report_module_git "$m" "${REPOS_DIR}/${m}"
   done
 
   if [ "${REPOS_DIR}" != "${ROOT}" ]; then
     echo "  与本快照的差异："
-    for m in zg-tsp-server zg-tsp-web zg-tsp-android zg-tsp-ios zg-tsp-docs; do
+    for m in zg-tsp-server zg-tsp-web zg-tsp-docs; do
       n=$(count_diff_files "${ROOT}/${m}" "${REPOS_DIR}/${m}")
       total=$((total + n))
       printf '    %-16s %s 处（差异条目）\n' "$m" "$n"
@@ -368,159 +365,6 @@ start_web() {
   wait_for_port "${WEB_PORT}" 25 "Web 端" || return 1
 }
 
-# 判断一个目录是否是「可用的 Android SDK 根目录」。
-#
-# Flutter 自己的判据很宽松（存在 platform-tools 或 licenses 就算），
-# 会误判 Homebrew 的 android-platform-tools cask 目录——它只有 adb，
-# 没有 platforms/ build-tools/ ndk/。这里要求 platforms/ 或 build-tools/。
-is_sdk_root() {
-  local d="$1"
-  [ -d "$d" ] || return 1
-  [ -d "${d}/platforms" ] || [ -d "${d}/build-tools" ] || return 1
-  return 0
-}
-
-# 查找 Android SDK 根目录：环境变量 → local.properties 的 sdk.dir → 常见位置。
-android_sdk_dir() {
-  local d props sdk_dir
-  for d in "${ANDROID_HOME:-}" "${ANDROID_SDK_ROOT:-}"; do
-    [ -n "$d" ] || continue
-    if is_sdk_root "$d"; then echo "$d"; return 0; fi
-  done
-
-  props="${REPOS_DIR:-}/zg-tsp-android/android/local.properties"
-  if [ -f "$props" ]; then
-    sdk_dir="$(sed -n 's/^[[:space:]]*sdk\.dir[[:space:]]*=[[:space:]]*\(.*\)$/\1/p' "$props" | head -1 | sed 's/[[:space:]]*$//')"
-    if [ -n "$sdk_dir" ] && is_sdk_root "$sdk_dir"; then
-      echo "$sdk_dir"; return 0
-    fi
-  fi
-
-  for d in "${HOME}/Library/Android/sdk" "${HOME}/Android/Sdk" \
-           "/opt/homebrew/share/android-commandlinetools" \
-           "/usr/local/share/android-commandlinetools"; do
-    [ -n "$d" ] || continue
-    if is_sdk_root "$d"; then echo "$d"; return 0; fi
-  done
-  return 1
-}
-
-flutter_device_id() {
-  # $1=平台（ios/android）
-  # `flutter run -d` 需要真实设备 ID，平台名（ios/android）并不被接受，
-  # 这里从 `flutter devices --machine` 中挑一个匹配该平台的设备。
-  local plat="$1"
-  flutter devices --machine 2>/dev/null | python3 -c '
-import json, sys
-plat = sys.argv[1]
-want = {"ios": ("ios", "darwin"), "android": ("android",)}[plat]
-try:
-    devs = json.load(sys.stdin)
-except Exception:
-    sys.exit(1)
-# 优先真机（deviceType 为 device），其次模拟器
-for kind in ("device", "simulator"):
-    for d in devs:
-        if d.get("targetPlatform") not in want:
-            continue
-        if d.get("deviceType") != kind:
-            continue
-        # 跳过无头浏览器等非移动目标
-        if d.get("targetPlatform") in ("web-javascript", "darwin"):
-            continue
-        print(d["id"])
-        sys.exit(0)
-sys.exit(1)
-' "$plat" 2>/dev/null
-}
-
-start_mobile() {
-  local plat="$1" dir="${REPOS_DIR}/zg-tsp-$1"
-  info "启动 ${plat} 端 zg-tsp-${plat}"
-  if ! command -v flutter >/dev/null 2>&1; then
-    err "找不到 flutter"; return 1
-  fi
-  if [ "$plat" = "ios" ] && ! xcode-select -p >/dev/null 2>&1; then
-    warn "iOS 构建需要完整 Xcode（当前仅 Command Line Tools），跳过"
-    return 0
-  fi
-  if [ "$plat" = "android" ] && [ -z "$(android_sdk_dir || true)" ]; then
-    warn "未检测到 Android SDK，跳过"; return 0
-  fi
-  [ -d "$dir" ] || { err "找不到 $dir"; return 1; }
-  ( cd "$dir" && flutter pub get ) > "${LOG_DIR}/${plat}-pubget.log" 2>&1 \
-    || { err "flutter pub get 失败"; return 1; }
-
-  # 解析可用设备 ID：优先真机，无真机则起模拟器
-  local device_id
-  device_id="$(flutter_device_id "$plat" || true)"
-  # DEVICE_ID 显式指定时优先采用，跳过自动探测
-  if [ -n "${DEVICE_ID:-}" ]; then
-    device_id="$DEVICE_ID"
-  fi
-  if [ -z "$device_id" ]; then
-    # 没有已连接设备，尝试拉起一个模拟器
-    local emu
-    emu="$(flutter emulators --machine 2>/dev/null | python3 -c '
-import json, sys
-plat = sys.argv[1]
-try:
-    emus = json.load(sys.stdin)
-except Exception:
-    sys.exit(1)
-for e in emus:
-    name = (e.get("name") or "").lower()
-    if plat == "ios" and ("ios" in name or "iphone" in name or "ipad" in name):
-        print(e["name"]); sys.exit(0)
-    if plat == "android" and ("android" in name or "pixel" in name or "emulator" in name):
-        print(e["name"]); sys.exit(0)
-sys.exit(1)
-' "$plat" 2>/dev/null || true)"
-    if [ -n "$emu" ]; then
-      warn "未检测到已连接设备，启动模拟器：${emu}"
-      ( cd "$dir" && flutter emulators --launch "$emu" ) >/dev/null 2>&1 || true
-      # 等模拟器就绪
-      local i=0
-      while [ $i -lt 30 ]; do
-        device_id="$(flutter_device_id "$plat" || true)"
-        [ -n "$device_id" ] && break
-        sleep 2; i=$((i + 1))
-      done
-    fi
-    if [ -z "$device_id" ]; then
-      warn "未找到可用的 ${plat} 设备或模拟器，跳过。"
-      echo "      启动模拟器：flutter emulators   或连接真机后重试"
-      echo "      也可用 DEVICE_ID 环境变量指定：DEVICE_ID=<id> $0 ${plat}"
-      return 0
-    fi
-  fi
-  ok "使用设备：${device_id}"
-
-  # 移动端 API 走构建期注入
-  local define="--dart-define=API_BASE_URL=${API_TARGET%/}/homework_api"
-
-  # Android：显式指定 SDK 根目录。
-  # Flutter 探测 Android SDK 的判据很宽松（存在 platform-tools 或 licenses
-  # 即算有效），在装了 Homebrew android-platform-tools cask 的机器上会误判成
-  # cask 目录——那里只有 adb，没有 platforms/ build-tools/ ndk/，
-  # Gradle 用它当 SDK 根会在装 NDK 时报 "licences have not been accepted"。
-  # 导出正确的 ANDROID_HOME 可让 Gradle 与 Flutter 指向同一个目录。
-  #
-  # 注意：不能用 `ANDROID_HOME=x exec flutter ...` —— start_bg 里是
-  # `exec "$@"`，前置环境赋值会被当成可执行文件名。这里改用 env 命令。
-  BG_ENV=""
-  if [ "$plat" = "android" ]; then
-    local sdk_root
-    sdk_root="$(android_sdk_dir || true)"
-    if [ -n "$sdk_root" ]; then
-      BG_ENV="ANDROID_HOME=${sdk_root} ANDROID_SDK_ROOT=${sdk_root}"
-    fi
-  fi
-
-  start_bg "${plat}" "$dir" flutter run -d "$device_id" "$define"
-  warn "${plat} 端正在启动，首次编译较慢，请查看日志：${LOG_DIR}/${plat}.log"
-}
-
 # --- 停止 / 状态 ---
 
 stop_all() {
@@ -572,19 +416,6 @@ show_status() {
       printf "  %-22s %-8s %s\n" "${name}" "${port}" "${G}运行中${N}"
     else
       printf "  %-22s %-8s %s\n" "${name}" "${port}" "未运行"
-    fi
-  done
-  # 移动端无端口，只能靠 PID 记录判断进程是否存活；
-  # 仅凭日志文件存在会误报（进程早已退出但日志文件还在）。
-  for plat in ios android; do
-    local pid=""
-    if [ -f "$PID_FILE" ]; then
-      pid="$(awk -v n="$plat" '$1 == n { print $2 }' "$PID_FILE" 2>/dev/null || true)"
-    fi
-    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-      printf "  %-22s %-8s %s\n" "${plat} 端" "-" "${G}运行中${N} (pid ${pid})"
-    elif [ -f "${LOG_DIR}/${plat}.log" ]; then
-      printf "  %-22s %-8s %s\n" "${plat} 端" "-" "未运行（日志见 ${LOG_DIR}/${plat}.log）"
     fi
   done
   echo
@@ -644,7 +475,7 @@ CMD="${1:-start}"
 # 「现在跑的是哪份代码」是这套脚本要根治的问题，任何时候都该看得见。
 # stop / logs 不打印 —— 它们不启动任何模块，输出会变成噪音。
 case "${CMD}" in
-  start|server|web|ios|android|all|status)
+  start|server|web|all|status)
     report_source
     ;;
 esac
@@ -652,8 +483,6 @@ esac
 case "${CMD}" in
   server)  start_server ;;
   web)     start_web ;;
-  ios)     start_mobile ios ;;
-  android) start_mobile android ;;
   all)
     start_server && start_web
     ;;
@@ -665,7 +494,7 @@ case "${CMD}" in
     ;;
   *)
     err "未知命令：$1"
-    echo "用法：$0 {start|server|web|ios|android|all|stop|status|logs}"
+    echo "用法：$0 {start|server|web|all|stop|status|logs}"
     exit 1
     ;;
 esac
