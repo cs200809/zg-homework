@@ -26,7 +26,19 @@ npm run dev
 
 开发环境走 Vite 代理（`/homework_api` → `VITE_PROXY_TARGET`，默认 `http://127.0.0.1:8000`，保留路径前缀），避免跨域。
 
-## 打包
+## 源码部署包
+
+```bash
+./scripts/web_package.sh -o /已有目录/zg-homework-web.tar.gz
+```
+
+打包需要 Python 3。输出路径须位于模块目录之外，且目标文件不能已存在。归档读取脚本所在模块当前工作树，包括未提交源码；不会拉取代码或切换分支。按仓库约定，生产打包应在经验证的 `main` 检出执行，打包期间不要修改源码。
+
+归档包含 `src/` 源码及资源、构建配置、依赖清单及锁文件、Nginx/Docker 配置、README 和运行及打包脚本；不包含测试、临时文件、依赖目录、构建产物或 `.env` 文件。部署时须自行审核运行环境；Vite 客户端变量会进入浏览器代码，不能存放密钥。解压到新目录后用 Node 20+ 安装依赖，按需另行准备配置并由运维配置独立 systemd/Nginx。
+
+**注意：** 打包仅收集文件，不验证或修复运行脚本。当前运行脚本仍存在生产安全问题，且尚未完成 Linux/systemd 实机验证；完成修复和隔离验证后才可生产部署。
+
+## 构建与 Docker 打包
 
 ```bash
 npm run build          # 产出 dist/，纯静态文件
@@ -36,6 +48,66 @@ docker run -d -p 8080:80 zg-homework-web:1.0.0
 ```
 
 `dist/` 是静态文件；默认构建使用同域 `/homework_api`，部署时还需将此前缀原样反代到服务端。Docker 内 Nginx 默认指向 `server:8000`，需自行提供可解析的服务端网络。
+
+## Linux 生产运行（独立 Nginx 实例）
+
+`scripts/web_run.sh` 仅管理预先配置的 **专用** systemd unit，不管理、修改或重启系统共享 Nginx。需要 Linux、systemd、Python 3、`ss`、Node >= 20、npm、已安装的 Web 依赖及 Nginx；运行账号需要 systemd 控制权限、读取监听进程及其 `/proc/*/cgroup` 的权限，以及发布目录写权限。脚本按自身路径识别当前检出，不拉取或切换代码。部署目录和配置必须由可信管理员维护，不得允许其他用户修改；脚本不是权限隔离工具。
+
+默认值是 `WEB_UNIT=zg-homework-web.service`、`WEB_PORT=8080`、`WEB_DEPLOY_DIR=/var/lib/zg-homework-web`、`WEB_NGINX_CONFIG=/etc/zg-homework-web/nginx.conf`、`WEB_NGINX_BIN=/usr/sbin/nginx`、`WEB_API_UPSTREAM=127.0.0.1:8000`。覆盖时必须同步调整下面的 unit 和配置；路径必须是绝对的、无符号链接且只包含字母、数字、`_`、`-`、`.`、`/`。先创建发布目录及其 `releases` 子目录，发布目录不得位于检出中，保证 Nginx 用户可读取目录和产物。不要预建 `current`，它是脚本管理的符号链接。已有 `current` 必须指向同一检出创建的 release。
+
+由运维手动配置以下专用 unit（把 `/absolute/path/zg-homework-web` 换为当前检出的物理路径），不要增加 ExecStartPre/Post、ExecStop/Post、ExecReload、RootDirectory 或 RootImage。该服务只能运行此专用 Nginx，不能指向共享 Nginx。unit 修改后由运维执行 `systemctl daemon-reload`。
+
+```ini
+[Unit]
+Description=Homework web dedicated nginx
+[Service]
+Type=simple
+WorkingDirectory=/absolute/path/zg-homework-web
+ExecStart=/usr/sbin/nginx -c /etc/zg-homework-web/nginx.conf -g "daemon off;"
+[Install]
+WantedBy=multi-user.target
+```
+
+`/etc/zg-homework-web/nginx.conf` 必须与下文完全一致（包括换行），以便脚本在控制服务之前验证归属与代理约定。修改变量时替换对应值；`WEB_API_UPSTREAM` 仅接受 `127.0.0.1:端口`。专用实例只监听本机，公网 TLS、域名和前置反代由运维另行配置。API 代理的 `proxy_pass` 没有末尾斜线，保留 `/homework_api/` 前缀。
+
+```nginx
+worker_processes 1;
+pid /var/lib/zg-homework-web/nginx.pid;
+error_log stderr;
+events { worker_connections 1024; }
+http {
+    include /etc/nginx/mime.types;
+    default_type application/octet-stream;
+    access_log /dev/stdout;
+    server {
+        listen 127.0.0.1:8080;
+        root /var/lib/zg-homework-web/current;
+        index index.html;
+        client_max_body_size 12m;
+        location /homework_api/ {
+            proxy_pass http://127.0.0.1:8000;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+        location / { try_files $uri $uri/ /index.html; }
+    }
+}
+```
+
+```bash
+./scripts/web_run.sh check
+./scripts/web_run.sh status
+./scripts/web_run.sh start
+./scripts/web_run.sh restart
+./scripts/web_run.sh stop
+journalctl -u zg-homework-web.service -n 100 --no-pager
+```
+
+`check` 和 `status` 不修改文件或控制服务；`status` 对服务未运行、Web 或 API 健康检查失败返回非零，分别报告 Web 和 API 状态。`start` 在已运行时不构建也不重启；更新代码使用 `restart`。每次实际启动或重启都会执行非增量 TypeScript 检查和 Vite 生产构建，并固定同域 API 地址。新产物先写入唯一 release，成功后原子切换 `current`；构建失败不会切换或停止已有服务。启动失败会恢复原有链接（首次部署没有旧链接），但服务可能仍处于失败或停止状态，需要运维检查日志并手动启动。API 不健康返回非零，不代表 Web 启动失败；健康接口也不保证数据库持续可用。
+
+旧 release 和失败的构建目录不会自动删除。回退时，由运维确认旧 release 属于该检出、保留其 `.web-run-owner` 文件，在停用并检查相应服务后原子替换 `current` 指向该目录，再由运维启动专用 unit；不要使用 `restart` 回退，因为它会重新构建。手工清理前确认目录归属和未被使用，脚本不会清理历史目录。部署只验证约定的配置和服务，不验证前置代理、TLS、API 后端或并发修改发布目录的外部程序。按仓库发布约定应从已验证的 `main` 检出部署。切换发布后，仍使用旧 HTML 的浏览器可能无法加载旧版本的哈希资源；应安排维护窗口或由前置服务提供旧版本静态资源。
 
 ## 环境（测试 + 生产）
 
