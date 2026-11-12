@@ -120,8 +120,8 @@ tar -xzf zg-tsp-web-1.0.0.tar.gz && cd zg-tsp-web-1.0.0
 sudo ./install.sh --domain tsp.example.com --api-upstream 127.0.0.1:8000
 ```
 
-部署架构：**同域反代**。前端 `VITE_API_BASE_URL=/api`，Nginx 把 `/api/` 转发给服务端
-（`proxy_pass` 末尾带 `/` 以剥掉前缀，因服务端路由本身没有 `/api` 前缀）。
+部署架构：**同域反代**。前端 `VITE_API_BASE_URL=/homework_api`，Nginx 把 `/homework_api/` 转发给服务端
+（服务端路由本身就带 `/homework_api` 前缀，`proxy_pass` **不带**末尾 `/`，不剥除前缀）。
 因此**不需要 CORS，服务端 8000 端口只监听 `127.0.0.1`，不对公网开放**。
 各模块的 `deploy/README-DEPLOY.md` 有完整的部署、升级、回滚、备份与排错说明。
 
@@ -217,7 +217,7 @@ src/
 └── pages/       common/ student/ teacher/ admin/ parent/
 ```
 
-- **代理**：`vite.config.ts` 把 `/api` 代理到 `VITE_PROXY_TARGET`（默认 `http://127.0.0.1:8000`）并 rewrite 掉 `/api` 前缀——服务端路由**没有** `/api` 前缀（是 `/auth`、`/classes`…），不 rewrite 会 404。`loadEnv` 第三参为空串，故 `VITE_PROXY_TARGET` 可被运行时环境变量覆盖（`dev.sh` 就是这么注入的）。
+- **代理**：`vite.config.ts` 把 `/homework_api` 代理到 `VITE_PROXY_TARGET`（默认 `http://127.0.0.1:8000`）——服务端路由本身就带 `/homework_api` 前缀，**不得剥除**（剥了会 404）。`loadEnv` 第三参为空串，故 `VITE_PROXY_TARGET` 可被运行时环境变量覆盖（`dev.sh` 就是这么注入的）。
 - **API 层**：`api/client.ts` 里 `post<T>()` 封装统一响应，`code !== 0` 时抛带 `code` 属性的 Error。**没有 401/403 全局拦截**——运行期 token 过期不会自动登出，只在应用启动的 `store/auth.ts` `init()` 里做一次 `/auth/me` 探测并清 localStorage。
 - **角色分流两段式**：路由守卫 `Protected roles={[...]}`（`router/index.tsx`）+ 菜单白名单 `MENUS: Record<Role, NavItem[]>`（`components/AdminLayout.tsx`）。admin 首登未改密会被强制跳到 `/change-password`。
 - **状态**：Zustand 单一 store，手动读写 localStorage（key `token` / `user`），无 persist 中间件。
@@ -226,7 +226,7 @@ src/
 - **手机号校验**：`src/utils/phone.ts` 是校验规则的唯一来源，与服务端 `app/schemas/auth.py` 的 `PHONE_PATTERN`、小程序 `utils/validate.js` 三处必须一致。**注册严格**（非手机号一律拒绝），**登录仅校验纯数字输入**——服务端 `admin` 账号的用户名是 `admin`（非手机号），若登录也强制手机号格式，管理员将无法登录。改规则时三处一起改。
 - **已知职责错位**：`api/parent.ts` 里混放了 admin 的全部接口（invite/user/rule/article/stats），文件命名与内容不符。
 
-**部署**：`Dockerfile` 两阶段（node:20-alpine 构建 → nginx:alpine），`nginx.conf` 配了 `location /api/` 反代到 `http://server:8000/`、`client_max_body_size 12m`（作业文件上传）、SPA 回退 `try_files ... /index.html`。`.env.production` 的 baseURL 已是 `/api`，与反代语义一致。仍**没有 docker-compose.yml**，且反代指向的 `server:8000` 无 compose 支撑——Docker 路径需自备 compose；裸机部署走「云服务器部署」一节的 `scripts/package.sh`。
+**部署**：`Dockerfile` 两阶段（node:20-alpine 构建 → nginx:alpine），`nginx.conf` 配了 `location /homework_api/` 反代到 `http://server:8000`、`client_max_body_size 12m`（作业文件上传）、SPA 回退 `try_files ... /index.html`。`.env.production` 的 baseURL 已是 `/homework_api`，与反代语义一致。仍**没有 docker-compose.yml**，且反代指向的 `server:8000` 无 compose 支撑——Docker 路径需自备 compose；裸机部署走「云服务器部署」一节的 `scripts/package.sh`。
 
 ## 已知缺陷（已验证，动手前先看这里）
 
@@ -242,7 +242,7 @@ src/
 
 5. **`api/parent.ts` 里混放了 admin 的全部接口**（invite/user/rule/article/stats），文件职责与命名不符。
 
-6. **`.env.production` 与 `nginx.conf` 的 `/api/` 反代语义冲突** —— ~~生产 baseURL 是绝对域名 `https://api.example.com`（占位符）~~ **已修复**：`.env.production` 的 `VITE_API_BASE_URL` 已改为 `/api`，与 nginx 的 `/api/` 反代语义一致。裸机部署见「云服务器部署」一节。仍存留的问题是 **nginx 反代指向的 `server:8000` 无 compose 支撑**（Docker 路径仍需自备 compose）。
+6. **nginx 反代目标无 compose 支撑** —— `.env.production` 的 `VITE_API_BASE_URL=/homework_api` 与 nginx 的 `location /homework_api/` 语义一致（**已修复**）。裸机部署见「云服务器部署」一节。仍存留的问题是 **nginx 反代指向的 `server:8000` 无 compose 支撑**（Docker 路径仍需自备 compose）。
 
 7. **`zg-tsp-docs/sys_doc/PRD.md` 2.2.1 与实现仍有出入**：PRD 第 4.1 节的建表 SQL 是 SQLite 方言，权威定义在 `zg-tsp-server/app/models/entities.py`。
 

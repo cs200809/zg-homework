@@ -1,10 +1,10 @@
 """模块独立性检查（PRD 第 12 节「模块独立性」）。
 
-静态分析四个模块的源码与配置，不依赖运行时。
+静态分析各模块的源码与配置，不依赖运行时。
 用法：
     python zg-tsp-docs/scripts/independence_check.py
 
-需在**聚合仓库**（四个模块同级检出）下运行；若缺少任一模块则跳过对应检查。
+需在**聚合仓库**（各模块同级检出）下运行；若缺少任一模块则跳过对应检查。
 """
 
 import ast
@@ -123,7 +123,7 @@ def main() -> int:
                         hardcoded.append(f"{f.relative_to(ROOT)}:{i} [{kind}]")
     check(not hardcoded, "3. 服务端地址均为外部配置，无硬编码",
           f"发现 {len(hardcoded)} 处: {hardcoded[:3]}" if hardcoded
-          else "代码中仅 localhost/示例地址；真实地址走 .env / --dart-define")
+          else "代码中仅 localhost/示例地址；真实地址走 .env")
 
     # 4. 三端配置项存在
     cfg = {
