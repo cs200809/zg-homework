@@ -22,7 +22,7 @@
 - **`scripts/dev.sh` 与 `scripts/init.sh` 必须保持 POSIX `sh` 兼容**：不用数组、`[[ ]]`、进程替换、`$'...'`。
 - **`dev.sh` 的三条既有语义不得丢失**：启动前不清 PID 文件、`start_bg` 用 `exec` 拿真实 pid、`stop` 兜底按端口清理。
 - **模块边界保留**：依赖清单各自独立、源码零跨模块 import、各自可单独打包。
-- **PRD 变更需同步四处**：`zg-tsp-web/src/api/types.ts` 是 PRD 的手工副本（本次不改接口，故无需动）。
+- **PRD 变更需同步客户端类型**：`zg-tsp-web/src/api/types.ts` 是 PRD 的手工副本。本次**不改任何接口**，故该文件无需变动。
 - **临时测试脚本放 `docs/` 下**（根 `docs/` 被 gitignore，属本地联调资产，不入库）。
 
 ## 环境事实（已实测，勿重新假设）
@@ -1829,10 +1829,10 @@ Co-Authored-By: Claude <noreply@anthropic.com>"
 
 ---
 
-## Task 12: 删除四个 `split/*` 分支与 `../zg-tsp-repos/`
+## Task 12: 删除五个 `split/*` 分支与 `../zg-tsp-repos/`
 
 **Files:**
-- Delete: git 分支 `split/zg-tsp-server`、`split/zg-tsp-web`、`split/zg-tsp-docs`、`split/zg-tsp-android`、`split/zg-tsp-ios`（共 4 个分支：server/web/docs/android/ios —— 实际为 **5** 个）
+- Delete: git 分支 `split/zg-tsp-server`、`split/zg-tsp-web`、`split/zg-tsp-docs`、`split/zg-tsp-android`、`split/zg-tsp-ios`（共 **5** 个分支）
 - Delete: 目录 `../zg-tsp-repos/`（整个目录）
 
 **Interfaces:**
