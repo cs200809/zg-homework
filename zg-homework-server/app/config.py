@@ -1,5 +1,6 @@
 """应用配置：从环境变量 / .env 读取，禁止硬编码密钥。"""
 
+import os
 from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -69,4 +70,4 @@ class Settings(BaseSettings):
         ]
 
 
-settings = Settings()
+settings = Settings(_env_file=None) if os.environ.get('ZG_HOMEWORK_SYSTEMD_PRODUCTION') == '1' else Settings()

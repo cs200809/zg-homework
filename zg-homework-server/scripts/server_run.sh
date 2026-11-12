@@ -17,6 +17,12 @@ UNIT = os.environ.get('SERVER_UNIT', 'zg-homework-server.service')
 PORT = os.environ.get('SERVER_PORT', '8000')
 PYTHON = os.environ.get('SERVER_PYTHON', str(ROOT / '.venv/bin/python'))
 TIMEOUT = 30
+CONFIG = Path('/etc/zg-homework-server/env')
+APP_KEYS = frozenset(('APP_NAME', 'ENV', 'DEBUG', 'DATABASE_URL', 'DB_ECHO', 'JWT_SECRET',
+                      'JWT_ALGORITHM', 'JWT_EXPIRE_DAYS', 'ADMIN_INIT_PASSWORD', 'CORS_ORIGINS',
+                      'UPLOAD_DIR', 'PRIVATE_HOMEWORK_DIR', 'MAX_UPLOAD_MB', 'ALLOWED_EXTENSIONS',
+                      'ARTICLE_ALLOWED_EXTENSIONS', 'ARTICLE_MAX_UPLOAD_MB', 'REGISTER_RATE_LIMIT',
+                      'ACTION_RATE_LIMIT'))
 
 
 def fail(message):
@@ -50,9 +56,14 @@ def properties():
         'ExecStopPost': 'a(sasbttttuii)', 'EnvironmentFiles': 'a(sb)',
     }
     path = '/org/freedesktop/systemd1/unit/' + ''.join(
-        chr(b) if (48 <= b <= 57 or 65 <= b <= 90 or 97 <= b <= 122) else f'_{b:02x}'
-        for b in UNIT.encode('utf-8')
+        chr(b) if (65 <= b <= 90 or 97 <= b <= 122 or (i > 0 and 48 <= b <= 57)) else f'_{b:02x}'
+        for i, b in enumerate(UNIT.encode('utf-8'))
     )
+    env_files = run('busctl', 'get-property', 'org.freedesktop.systemd1', path,
+                    'org.freedesktop.systemd1.Service', 'EnvironmentFiles')
+    if env_files.returncode or env_files.stdout.strip() != f'a(sb) 1 "{CONFIG}" false':
+        fail('单元必须且只能使用必需的 /etc/zg-homework-server/env 环境文件')
+    values['EnvironmentFiles'] = str(CONFIG)
     for name in names:
         if name not in values and name in array_types:
             prop = run('busctl', 'get-property', 'org.freedesktop.systemd1', path,
@@ -71,15 +82,20 @@ def validate(p):
         fail('单元未加载或需要执行 daemon-reload')
     if p['WorkingDirectory'] != str(ROOT) or p['Type'] != 'simple' or p['KillMode'] != 'control-group':
         fail('单元的工作目录、Type 或 KillMode 不符合约定')
-    if any(p[n] for n in ('ExecStartPre', 'ExecStartPost', 'ExecCondition', 'ExecStop', 'ExecStopPost', 'EnvironmentFiles', 'RootDirectory', 'RootImage')):
-        fail('单元使用了不支持的钩子、环境文件或文件系统根目录')
-    if p['Environment'] != 'PYTHONDONTWRITEBYTECODE=1' or p['PassEnvironment'] or p['UnsetEnvironment'] or p['PAMName']:
-        fail('单元只能设置 PYTHONDONTWRITEBYTECODE=1，不能更改继承的环境或使用 PAM')
+    if any(p[n] for n in ('ExecStartPre', 'ExecStartPost', 'ExecCondition', 'ExecStop', 'ExecStopPost', 'RootDirectory', 'RootImage')):
+        fail('单元使用了不支持的钩子或文件系统根目录')
+    if p['EnvironmentFiles'] != str(CONFIG):
+        fail('单元必须且只能使用必需的 /etc/zg-homework-server/env 环境文件')
+    if (set(p['Environment'].split()) != {'PYTHONDONTWRITEBYTECODE=1', 'ZG_HOMEWORK_SYSTEMD_PRODUCTION=1'}
+            or p['PassEnvironment'] or p['UnsetEnvironment'] or p['PAMName']):
+        fail('单元环境设置不符合生产约定，或使用了 PAM')
     manager = run('systemctl', 'show-environment')
     if manager.returncode:
         fail('无法验证 systemd 管理器环境')
-    if any(line.startswith(('PYTHON', 'UVICORN_')) for line in manager.stdout.splitlines()):
-        fail('systemd 管理器包含不支持的 PYTHON* 或 UVICORN_* 变量')
+    for line in manager.stdout.splitlines():
+        key = line.partition('=')[0].upper()
+        if key in APP_KEYS or key == 'ZG_HOMEWORK_SYSTEMD_PRODUCTION' or key.startswith(('PYTHON', 'UVICORN_', 'LD_')):
+            fail('systemd 管理器包含不支持的应用、Python、Uvicorn 或动态链接环境变量')
     expected = f'{PYTHON} -m uvicorn app.main:app --host 127.0.0.1 --port {PORT} --workers 1'
     # systemctl show uses this structured format; reject extra commands and flags.
     pattern = r'^\{ path=(.*?) ; argv\[\]=(.*?) ; ignore_errors=no ; .* \}$'
@@ -121,10 +137,10 @@ def active_owned(p):
             fail('运行中的进程不在单元的控制组中')
         env = proc.joinpath('environ').read_bytes().split(b'\0')
         entries = [os.fsdecode(x) for x in env if x]
-        if 'PYTHONDONTWRITEBYTECODE=1' not in entries or any(
-            (x.startswith('PYTHON') and x != 'PYTHONDONTWRITEBYTECODE=1') or x.startswith('UVICORN_') for x in entries
-        ):
-            fail('运行中的进程包含不支持的 Python 或 Uvicorn 环境变量')
+        if ('PYTHONDONTWRITEBYTECODE=1' not in entries or 'ZG_HOMEWORK_SYSTEMD_PRODUCTION=1' not in entries or any(
+            (x.startswith('PYTHON') and x != 'PYTHONDONTWRITEBYTECODE=1') or x.startswith(('UVICORN_', 'LD_')) for x in entries
+        )):
+            fail('运行中的进程缺少生产标志或包含不支持的 Python、Uvicorn 或动态链接环境变量')
         fds = {os.readlink(fd) for fd in proc.joinpath('fd').iterdir() if fd.exists()}
         owned = {x[8:-1] for x in fds if x.startswith('socket:[') and x.endswith(']')}
     except (OSError, ValueError) as exc:
@@ -144,37 +160,81 @@ def runtime():
     if manager.returncode:
         fail('无法检查管理器环境以验证配置')
     manager_env = dict(line.split('=', 1) for line in manager.stdout.splitlines() if '=' in line)
-    if not (ROOT / '.env').is_file():
-        fail('生产配置需要模块目录下的 .env 文件')
+    if any(k.upper() in APP_KEYS or k.upper() == 'ZG_HOMEWORK_SYSTEMD_PRODUCTION'
+           or k.upper().startswith(('PYTHON', 'UVICORN_', 'LD_')) for k in manager_env):
+        fail('systemd 管理器包含不支持的应用、Python、Uvicorn 或动态链接环境变量')
+    if not CONFIG.is_file():
+        fail('生产配置需要 /etc/zg-homework-server/env 文件')
     # Never print configuration values or Python exception text, which may contain secrets.
     code = r'''
 import os, re, sys
 from pathlib import Path
-from dotenv import dotenv_values
-v = {k.upper(): value for k, value in dotenv_values(sys.argv[1]).items()}
-v.update({k.upper(): value for k, value in os.environ.items()})
-assert v.get("ENV", "").lower() in ("prod", "production")
-assert v.get("DEBUG", "").lower() in ("false", "0", "no", "off")
-assert v.get("DATABASE_URL", "").startswith("mysql+pymysql://")
-assert v.get("JWT_SECRET") and v["JWT_SECRET"] != "change-me-in-production"
-for key in ("DATABASE_URL", "JWT_SECRET", "UPLOAD_DIR", "PRIVATE_HOMEWORK_DIR", "CORS_ORIGINS"):
-    assert not re.search(r"__[^\s]*?__", v.get(key) or "")
-root = Path(sys.argv[1]).parent.parent.resolve()
-paths = []
-for key in ("UPLOAD_DIR", "PRIVATE_HOMEWORK_DIR"):
-    assert v.get(key) and Path(v[key]).is_absolute()
-    path = Path(v[key]).resolve()
-    assert path != root and root not in path.parents
-    paths.append(path)
-assert paths[0] != paths[1] and paths[0] not in paths[1].parents and paths[1] not in paths[0].parents
+try:
+    allowed = set(sys.argv[3].split(','))
+    v = {}
+    with open(sys.argv[1], encoding='utf-8', newline='') as source:
+        text = source.read()
+    if any((ord(c) < 32 and c != '\n') or ord(c) == 127 for c in text):
+        sys.exit(2)
+    for line in text.split('\n'):
+        if not line or line.startswith('#'):
+            continue
+        key, sep, value = line.partition('=')
+        if (not sep or key not in allowed or key in v or value != value.strip()
+                or any(ord(c) < 32 or ord(c) == 127 or c in "'\"\\$" for c in value)):
+            sys.exit(2)
+        v[key] = value
+    mask = 0
+    if v.get("ENV", "").lower() not in ("prod", "production"):
+        mask |= 1
+    if v.get("DEBUG", "").lower() not in ("false", "0", "no", "off"):
+        mask |= 2
+    if not v.get("DATABASE_URL", "").startswith("mysql+pymysql://"):
+        mask |= 4
+    if not v.get("JWT_SECRET") or v["JWT_SECRET"] == "change-me-in-production":
+        mask |= 8
+    for key, bit in (("DATABASE_URL", 4), ("JWT_SECRET", 8), ("UPLOAD_DIR", 16),
+                     ("PRIVATE_HOMEWORK_DIR", 32), ("CORS_ORIGINS", 64)):
+        if re.search(r"__[^\s]*?__", v.get(key) or ""):
+            mask |= bit
+    root = Path(sys.argv[2]).resolve()
+    paths = []
+    for key, bit in (("UPLOAD_DIR", 16), ("PRIVATE_HOMEWORK_DIR", 32)):
+        if not v.get(key) or not Path(v[key]).is_absolute():
+            mask |= bit
+            paths.append(None)
+            continue
+        path = Path(v[key]).resolve()
+        if path == root or root in path.parents:
+            mask |= bit
+        paths.append(path)
+    a, b = paths
+    if a is not None and b is not None and (a == b or a in b.parents or b in a.parents):
+        mask |= 16 | 32
+except Exception:
+    sys.exit(1)
+sys.exit(128 | mask if mask else 0)
 '''
     try:
-        config = subprocess.run([PYTHON, '-I', '-B', '-c', code, str(ROOT / '.env')],
+        config = subprocess.run([PYTHON, '-I', '-B', '-c', code, str(CONFIG), str(ROOT.parent), ','.join(sorted(APP_KEYS))],
                                 env=manager_env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=15)
     except (OSError, subprocess.TimeoutExpired):
         fail('无法检查生产配置')
     if config.returncode:
-        fail('生产配置要求 ENV=prod、DEBUG=false、MySQL DATABASE_URL、非默认 JWT_SECRET、无 __...__ 占位符，以及位于检出目录之外、互不相同且不嵌套的绝对上传路径')
+        if config.returncode == 2:
+            fail('生产配置文件格式不受支持：请检查键名、重复项、引号、转义、插值及空白')
+        if 129 <= config.returncode <= 255:
+            checks = (
+                (1, 'ENV 必须为 prod 或 production'),
+                (2, 'DEBUG 必须关闭'),
+                (4, 'DATABASE_URL 必须使用 mysql+pymysql:// 且不能含占位符'),
+                (8, 'JWT_SECRET 必须非空、非默认值且不能含占位符'),
+                (16, 'UPLOAD_DIR 必须为检出目录之外、不重叠的绝对路径且不能含占位符'),
+                (32, 'PRIVATE_HOMEWORK_DIR 必须为检出目录之外、不重叠的绝对路径且不能含占位符'),
+                (64, 'CORS_ORIGINS 不能含占位符'),
+            )
+            fail('生产配置校验失败：' + '；'.join(message for bit, message in checks if config.returncode & bit))
+        fail('无法检查生产配置')
     app = ROOT / 'app'
     if app.is_symlink() or not app.is_dir():
         fail('app 必须是当前检出目录中的真实目录')
