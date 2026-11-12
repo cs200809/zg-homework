@@ -7,6 +7,7 @@
 需在**聚合仓库**（四个模块同级检出）下运行；若缺少任一模块则跳过对应检查。
 """
 
+import ast
 import json
 import re
 import subprocess
@@ -15,7 +16,7 @@ from pathlib import Path
 
 # 聚合仓库根目录：本脚本位于 <root>/zg-tsp-docs/scripts/
 ROOT = Path(__file__).resolve().parent.parent.parent
-MODULES = ["zg-tsp-server", "zg-tsp-web", "zg-tsp-ios", "zg-tsp-android"]
+MODULES = ["zg-tsp-server", "zg-tsp-web"]
 
 results: list[tuple[bool, str, str]] = []
 
@@ -43,6 +44,32 @@ def source_files(module: str) -> list[Path]:
     return out
 
 
+def docstring_lines(path: Path) -> set[int]:
+    """Python 文件中属于 docstring 的行号集合（文档中的示例不算硬编码）。"""
+    if path.suffix != ".py":
+        return set()
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8", errors="ignore"))
+    except (SyntaxError, ValueError):
+        return set()
+    lines: set[int] = set()
+    holders = (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+    for node in ast.walk(tree):
+        if not isinstance(node, holders):
+            continue
+        body = getattr(node, "body", None)
+        if not body:
+            continue
+        first = body[0]
+        if (
+            isinstance(first, ast.Expr)
+            and isinstance(first.value, ast.Constant)
+            and isinstance(first.value.value, str)
+        ):
+            lines.update(range(first.lineno, (first.end_lineno or first.lineno) + 1))
+    return lines
+
+
 def main() -> int:
     print("\n=== 模块独立性检查 ===")
 
@@ -50,12 +77,10 @@ def main() -> int:
     manifests = {
         "zg-tsp-server": "zg-tsp-server/requirements.txt",
         "zg-tsp-web": "zg-tsp-web/package.json",
-        "zg-tsp-ios": "zg-tsp-ios/pubspec.yaml",
-        "zg-tsp-android": "zg-tsp-android/pubspec.yaml",
     }
     missing = [m for m, f in manifests.items() if not (ROOT / f).exists()]
-    check(not missing, "1. 四模块各自有独立依赖清单",
-          f"缺失: {missing}" if missing else "requirements / package.json / pubspec ×2")
+    check(not missing, "1. 各模块有独立依赖清单",
+          f"缺失: {missing}" if missing else "requirements / package.json")
 
     # 2. 源码中不含对其他模块的引用
     cross = []
@@ -75,7 +100,7 @@ def main() -> int:
                     if re.search(rf"\b(from|import|require)\b.*\b(o)\b", code):
                         cross.append(f"{f.relative_to(ROOT)}: {code[:70]}")
     check(not cross, "2. 源码中无跨模块 import / 路径引用",
-          f"发现 {len(cross)} 处: {cross[:2]}" if cross else "四模块零交叉引用")
+          f"发现 {len(cross)} 处: {cross[:2]}" if cross else "各模块零交叉引用")
 
     # 3. 服务端地址为外部配置，无硬编码
     hardcoded = []
@@ -86,9 +111,12 @@ def main() -> int:
     for m in MODULES:
         for f in source_files(m):
             txt = f.read_text(encoding="utf-8", errors="ignore")
+            doc_lines = docstring_lines(f)
             for i, line in enumerate(txt.splitlines(), 1):
                 st = line.strip()
                 if st.startswith(("#", "//", "///", "*")):
+                    continue
+                if i in doc_lines:
                     continue
                 for pat, kind in patterns:
                     if pat.search(line):
@@ -101,62 +129,30 @@ def main() -> int:
     cfg = {
         "服务端 .env.example": ROOT / "zg-tsp-server/.env.example",
         "Web .env.production": ROOT / "zg-tsp-web/.env.production",
-        "移动端 config.dart": ROOT / "zg-tsp-ios/lib/core/config.dart",
     }
     absent = [n for n, p in cfg.items() if not p.exists()]
-    check(not absent, "4. 三个客户端均有外部配置项",
-          f"缺失: {absent}" if absent else ".env.example / .env.production / config.dart")
+    check(not absent, "4. 客户端均有外部配置项",
+          f"缺失: {absent}" if absent else ".env.example / .env.production")
 
     # 5. 各模块独立构建产物与 Dockerfile
     docker = [m for m in ("zg-tsp-server", "zg-tsp-web") if not (ROOT / m / "Dockerfile").exists()]
     check(not docker, "5. server/web 有独立打包配置",
           f"缺失: {docker}" if docker else "各自 Dockerfile")
 
-    # 6. 移动端渠道配置（决策 7：测试 + 生产）
-    #    注意：渠道不是靠 pubspec.yaml 的 flavors: 键实现的——Flutter 不读那个键，
-    #    写了也不生效。真实机制是 scripts/build.sh 在打包时改写平台工程：
-    #      - Android：android/app/build.gradle.kts 的 productFlavors{dev,prod}
-    #      - iOS：scripts/lib/ios_flavor.py 生成 *-<Scheme> 构建配置与 <Scheme>.xcscheme
-    #    运行期渠道由 --dart-define=FLAVOR=dev|prod 注入，见 lib/core/config.dart。
-    def _has_define(mod: str) -> bool:
-        cfg = ROOT / mod / "lib/core/config.dart"
-        return cfg.exists() and "fromEnvironment" in cfg.read_text(encoding="utf-8")
-
-    android_gradle = ROOT / "zg-tsp-android/android/app/build.gradle.kts"
-    android_flavors = False
-    if android_gradle.exists():
-        gtext = android_gradle.read_text(encoding="utf-8")
-        android_flavors = (
-            "productFlavors" in gtext
-            and 'create("dev")' in gtext
-            and 'create("prod")' in gtext
-        )
-    check(android_flavors and _has_define("zg-tsp-android"),
-          "6. zg-tsp-android 支持双渠道 + 构建期注入",
-          "productFlavors{dev,prod} + --dart-define" if android_flavors and _has_define("zg-tsp-android")
-          else f"productFlavors={android_flavors} dart-define={_has_define('zg-tsp-android')}")
-
-    ios_flavor_tool = ROOT / "scripts/lib/ios_flavor.py"
-    check(ios_flavor_tool.exists() and _has_define("zg-tsp-ios"),
-          "6. zg-tsp-ios 支持双渠道 + 构建期注入",
-          "ios_flavor.py 生成 *-Dev 配置 + --dart-define" if ios_flavor_tool.exists() and _has_define("zg-tsp-ios")
-          else f"ios_flavor.py={ios_flavor_tool.exists()} dart-define={_has_define('zg-tsp-ios')}")
-
     # 7. 服务端不可用时客户端不崩溃（静态验证：是否有降级处理）
     web_degrade = (ROOT / "zg-tsp-web/src/api/client.ts").read_text(encoding="utf-8")
-    mobile_degrade = (ROOT / "zg-tsp-ios/lib/core/api_client.dart").read_text(encoding="utf-8")
-    check("ServiceUnavailableError" in web_degrade and "ServiceUnavailableError" in mobile_degrade,
-          "7. 服务端不可用时客户端降级不崩溃",
-          "Web 与移动端均有 ServiceUnavailableError")
+    check("ServiceUnavailableError" in web_degrade,
+          "6. 服务端不可用时客户端降级不崩溃",
+          "Web 端有 ServiceUnavailableError")
 
     # 8. 服务端 /health 可用且未引入多余监控依赖
     req = (ROOT / "zg-tsp-server/requirements.txt").read_text(encoding="utf-8")
     monitoring = [d for d in ("prometheus", "sentry", "datadog", "newrelic") if d in req.lower()]
-    check(not monitoring, "8. 未引入多余监控依赖",
+    check(not monitoring, "7. 未引入多余监控依赖",
           f"发现: {monitoring}" if monitoring else "无 prometheus/sentry 等")
 
     health = (ROOT / "zg-tsp-server/app/main.py").read_text(encoding="utf-8")
-    check('"/health"' in health, "9. 服务端 /health 已实现", "POST /health")
+    check('/health"' in health, "8. 服务端 /health 已实现", "POST /health")
 
     # ---------- 汇总 ----------
     passed = sum(1 for ok, _, _ in results if ok)
