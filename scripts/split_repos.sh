@@ -2,7 +2,7 @@
 # 拆分与推送脚本
 #
 # 用法：
-#   ./scripts/split_repos.sh split     # 生成五个独立仓库到 ../zg-tsp-repos/
+#   ./scripts/split_repos.sh split     # 生成三个独立仓库到 ../zg-tsp-repos/
 #   ./scripts/split_repos.sh push      # 推送到各仓库的 origin（需先配置 remote）
 #   ./scripts/split_repos.sh status    # 查看各仓库状态
 #
@@ -15,7 +15,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT="${ROOT}/../zg-tsp-repos"
 BRANCH_PREFIX="split/"
 
-MODULES=(zg-tsp-server zg-tsp-web zg-tsp-ios zg-tsp-android zg-tsp-docs)
+MODULES=(zg-tsp-server zg-tsp-web zg-tsp-docs)
 
 cmd_split() {
   echo "==> 拆分到 ${OUT}"
