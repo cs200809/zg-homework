@@ -15,7 +15,7 @@
 #   ./scripts/dev.sh server       # 只启动服务端
 #   ./scripts/dev.sh web          # 只启动 Web 端
 #   ./scripts/dev.sh all          # 启动全部
-#   ./scripts/dev.sh stop         # 停止本脚本启动的所有进程
+#   ./scripts/dev.sh stop         # 仅向身份核验通过的记录进程发送停止信号
 #   ./scripts/dev.sh status       # 查看各模块运行状态
 #   ./scripts/dev.sh logs         # 跟随查看日志
 #
@@ -104,6 +104,15 @@ server_python() {
   fi
 }
 
+# PID 与启动时间、命令行一起核对；查询失败时绝不发送信号。
+# lstart 在部分系统上只有秒级精度，核对与 kill 也不是原子操作。
+process_identity() {
+  local details
+  details="$(ps -p "$1" -o lstart= -o command= 2>/dev/null)" || return 1
+  [ -n "$details" ] || return 1
+  printf '%s' "$details" | od -An -tx1 | tr -d ' \t\n'
+}
+
 start_bg() {
   # $1=名称 $2=工作目录 $3..=命令
   local name="$1" dir="$2"; shift 2
@@ -123,15 +132,26 @@ start_bg() {
   fi
   local pid=$!
 
-  # PID 文件格式：<模块名> <pid>，启动时只替换本模块的记录，
-  # 不影响其他模块（端口占用提前退出时也能保留旧记录）。
+  # 等待 exec 后采集身份；无法验证时不记录，更不能猜测并终止。
+  sleep 0.2
+  local identity parent
+  parent="$(ps -p "$pid" -o ppid= 2>/dev/null | tr -d ' \t\n')"
+  if [ "$parent" != "$$" ]; then
+    warn "${name} 的启动进程已退出或无法验证 (pid ${pid})"
+    return 1
+  fi
+  identity="$(process_identity "$pid")" || {
+    warn "无法验证 ${name} 的进程身份 (pid ${pid})，请手动检查日志及进程"
+    return 1
+  }
+  # 格式：模块名 PID 身份；旧格式不可安全用于停止。
   local tmp="${PID_FILE}.tmp"
   if [ -f "$PID_FILE" ]; then
     grep -v "^${name} " "$PID_FILE" > "$tmp" 2>/dev/null || true
   else
     : > "$tmp"
   fi
-  echo "${name} ${pid}" >> "$tmp"
+  echo "${name} ${pid} ${identity}" >> "$tmp"
   mv "$tmp" "$PID_FILE"
 
   ok "${name} 已启动 (pid ${pid})  日志：${LOG_DIR}/${name}.log"
@@ -167,7 +187,7 @@ start_server() {
   fi
   BG_ENV=""
   start_bg server "${REPOS_DIR}/zg-tsp-server" \
-    "$py" -m uvicorn app.main:app --host 127.0.0.1 --port "${SERVER_PORT}" --reload
+    "$py" -m uvicorn app.main:app --host 127.0.0.1 --port "${SERVER_PORT}" --reload || return 1
   wait_for_port "${SERVER_PORT}" 20 "服务端" || return 1
 }
 
@@ -188,7 +208,9 @@ start_web() {
   # 用 BG_ENV（由 start_bg 转成 `env VAR=VAL` 前缀），
   # 避免依赖「变量前缀作用于函数调用」这一各 shell 语义略有差异的行为。
   BG_ENV="VITE_PROXY_TARGET=${API_TARGET}"
-  start_bg web "${REPOS_DIR}/zg-tsp-web" npm run dev -- --port "${WEB_PORT}"
+  # 直接运行 Vite，避免 npm 和 shell 在收到 TERM 后遗留 Vite 孙进程。
+  # 与 package.json 的 dev 命令保持一致；strictPort 防止端口竞争时换端口。
+  start_bg web "${REPOS_DIR}/zg-tsp-web" ./node_modules/.bin/vite --mode development --port "${WEB_PORT}" --strictPort || return 1
   BG_ENV=""
   wait_for_port "${WEB_PORT}" 25 "Web 端" || return 1
 }
@@ -196,42 +218,52 @@ start_web() {
 # --- 停止 / 状态 ---
 
 stop_all() {
-  info "停止所有进程"
-
-  if [ -f "$PID_FILE" ]; then
-    # 用 xargs 读 pid 列表：避免 `while read` 消耗脚本 stdin
-    while read -r name pid; do
-      [ -n "${pid:-}" ] || continue
-      if kill -0 "$pid" 2>/dev/null; then
-        # 杀掉整个进程组（npm run dev 会派生子进程）
-        pkill -P "$pid" 2>/dev/null || true
-        kill "$pid" 2>/dev/null || true
-        echo "  ${G}✓${N} 已停止 ${name} (pid ${pid})"
-      fi
-    done < "$PID_FILE"
-    rm -f "$PID_FILE"
-  else
-    warn "没有进程记录，仅按端口清理"
+  info "停止身份可验证的进程"
+  if [ ! -f "$PID_FILE" ]; then
+    warn "没有进程记录；不会按端口停止进程"
+    return 0
   fi
 
-  # 兜底：等端口释放，超时则强杀
-  for port in "${SERVER_PORT}" "${WEB_PORT}"; do
-    pids="$(lsof -ti:"${port}" 2>/dev/null || true)"
-    [ -n "$pids" ] || continue
-    for pid in $pids; do
-      kill "$pid" 2>/dev/null || true
-    done
-    for _ in 1 2 3 4 5 6 7 8 9 10; do
-      port_busy "$port" || break
-      sleep 0.3
-    done
-    if port_busy "$port"; then
-      for pid in $(lsof -ti:"${port}" 2>/dev/null); do
-        kill -9 "$pid" 2>/dev/null || true
-      done
-      ok "端口 ${port} 强制释放"
+  local tmp line name pid identity extra current failed=0
+  tmp="$(mktemp "${LOG_DIR}/dev.pids.XXXXXX")" || return 1
+  while IFS= read -r line || [ -n "$line" ]; do
+    read -r name pid identity extra <<EOF
+$line
+EOF
+    case "${name:-}" in server|web) ;; *) warn "无效进程记录，跳过"; continue ;; esac
+    case "${pid:-}" in ''|*[!0-9]*|0*|1) warn "无效 PID，跳过 ${name}"; continue ;; esac
+    case "${identity:-}" in
+      ''|*[!0-9a-f]*)
+        warn "旧版或无效身份记录，保留 ${name} (pid ${pid})；请手动核查进程及记录 ${PID_FILE}"
+        printf '%s\n' "$line" >> "$tmp"
+        failed=1
+        continue
+        ;;
+    esac
+    if [ -n "${extra:-}" ]; then
+      warn "无效进程记录，跳过 ${name}"
+      continue
     fi
-  done
+    current="$(process_identity "$pid")" || {
+      warn "无法验证 ${name} (pid ${pid})，保留记录"
+      printf '%s %s %s\n' "$name" "$pid" "$identity" >> "$tmp"
+      failed=1
+      continue
+    }
+    if [ "$current" != "$identity" ]; then
+      warn "${name} (pid ${pid}) 身份已变化，跳过"
+      continue
+    fi
+    if kill "$pid" 2>/dev/null; then
+      ok "已向 ${name} (pid ${pid}) 发送停止信号"
+    else
+      warn "无法停止 ${name} (pid ${pid})，保留记录"
+      printf '%s %s %s\n' "$name" "$pid" "$identity" >> "$tmp"
+      failed=1
+    fi
+  done < "$PID_FILE"
+  mv "$tmp" "$PID_FILE"
+  [ "$failed" -eq 0 ]
 }
 
 show_status() {

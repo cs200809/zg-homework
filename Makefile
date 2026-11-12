@@ -15,7 +15,7 @@ server: ## 启动服务端
 	@"$(ROOT)/scripts/dev.sh" server
 web: ## 启动 Web
 	@"$(ROOT)/scripts/dev.sh" web
-stop: ## 停止服务（可能终止占用配置端口的其他进程）
+stop: ## 仅停止身份核验通过的记录进程；未核验进程需手动处理
 	@"$(ROOT)/scripts/dev.sh" stop
 status: ## 查看状态
 	@"$(ROOT)/scripts/dev.sh" status

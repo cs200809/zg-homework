@@ -9,8 +9,10 @@
 import ast
 import json
 import re
+import io
 import subprocess
 import sys
+import tokenize
 from pathlib import Path
 
 # 聚合仓库根目录：本脚本位于 <root>/zg-tsp-docs/scripts/
@@ -69,6 +71,68 @@ def docstring_lines(path: Path) -> set[int]:
     return lines
 
 
+def cross_module_references(path: Path, module: str) -> list[str]:
+    """查找源码中指向另一模块的 import 或文件路径，忽略注释和文档字符串。"""
+    text = path.read_text(encoding="utf-8", errors="ignore")
+    if path.suffix == ".py":
+        doc_lines = docstring_lines(path)
+        try:
+            tokens = tokenize.generate_tokens(io.StringIO(text).readline)
+            parts = [(tok.start[0], tok.string) for tok in tokens
+                     if tok.type not in (tokenize.COMMENT, tokenize.NL, tokenize.NEWLINE,
+                                         tokenize.INDENT, tokenize.DEDENT, tokenize.ENDMARKER)
+                     and not (tok.type == tokenize.STRING and tok.start[0] in doc_lines)]
+        except (tokenize.TokenError, IndentationError):
+            # 源码不完整时也尽量检查，不能静默跳过整个文件。
+            parts = list(enumerate(text.splitlines(), 1))
+    else:
+        # 保留字符串中的 //、/* 等字符，同时移除行注释和多行注释。
+        lexer = re.compile(r"//[^\n]*|/\*[\s\S]*?\*/|'(?:\\.|[^'\\])*'|\"(?:\\.|[^\"\\])*\"|`(?:\\.|[^`\\])*`|[^/\"'`]+|/", re.MULTILINE)
+        parts = []
+        for match in lexer.finditer(text):
+            value = match.group()
+            if not value.startswith(("//", "/*")):
+                parts.append((text.count("\n", 0, match.start()) + 1, value))
+
+    # 文件路径必须实际落入另一模块，不能仅凭 server/web 等路径段判断。
+    # 普通文本和 HTTP 地址也不是源码依赖。
+    others = [other for other in MODULES if other != module]
+    hits = []
+    if path.suffix == ".py":
+        try:
+            tree = ast.parse(text)
+        except (SyntaxError, ValueError):
+            tree = None
+        if tree is not None:
+            names = {other.removeprefix("zg-tsp-") for other in others}
+            names.update(other.replace("-", "_") for other in others)
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    imports = [alias.name for alias in node.names]
+                elif isinstance(node, ast.ImportFrom) and node.level == 0:
+                    imports = [node.module or ""]
+                else:
+                    continue
+                if any(name.split(".")[0] in names for name in imports):
+                    hits.append(f"{path.relative_to(ROOT)}:{node.lineno}: import {', '.join(imports)}")
+    string_pattern = re.compile(r"(['\"`])((?:\\.|(?!\1)[^\\])*)\1", re.DOTALL)
+    for line, value in parts:
+        for match in string_pattern.finditer(value):
+            candidate = match.group(2)
+            if not candidate or re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", candidate):
+                continue
+            if candidate.startswith(("./", "../", "/")):
+                target = (path.parent / candidate).resolve()
+                cross = any(target.is_relative_to((ROOT / other).resolve()) for other in others)
+            else:
+                # Bare package specifiers may refer directly to a sibling module.
+                cross = any(candidate == other or candidate.startswith(other + "/")
+                            for other in others)
+            if cross:
+                hits.append(f"{path.relative_to(ROOT)}:{line}: {candidate[:70]}")
+    return hits
+
+
 def main() -> int:
     print("\n=== 模块边界检查 ===")
 
@@ -84,20 +148,8 @@ def main() -> int:
     # 2. 源码中不含对其他模块的引用
     cross = []
     for m in MODULES:
-        me = m.replace("zg-tsp-", "")
         for f in source_files(m):
-            txt = f.read_text(encoding="utf-8", errors="ignore")
-            for other in MODULES:
-                if other == m:
-                    continue
-                o = other.replace("zg-tsp-", "")
-                # 只查 import/路径引用，忽略注释与文档字符串中的提及
-                for line in txt.splitlines():
-                    code = line.strip()
-                    if code.startswith(("#", "//", "*", "///", "/*")):
-                        continue
-                    if re.search(rf"\b(from|import|require)\b.*\b(o)\b", code):
-                        cross.append(f"{f.relative_to(ROOT)}: {code[:70]}")
+            cross.extend(cross_module_references(f, m))
     check(not cross, "2. 源码中无跨模块 import / 路径引用",
           f"发现 {len(cross)} 处: {cross[:2]}" if cross else "各模块零交叉引用")
 
