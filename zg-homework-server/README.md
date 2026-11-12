@@ -38,6 +38,16 @@ curl -X POST http://127.0.0.1:8000/homework_api/health
 
 ## Linux systemd 运维
 
+在新部署目录首次准备 Python 环境（不要在运行中服务的现有环境上升级）：
+
+```bash
+sh scripts/init_check.sh
+# 如果 python3 不是 3.12+，可指定解释器：
+INIT_PYTHON=python3.12 sh scripts/init_check.sh
+```
+
+脚本创建模块根目录 `.venv`，安装 `requirements.txt` 并执行 Uvicorn 导入和 `pip check`；不启动服务、不修改 systemd 或生产配置。已有 `.venv`（包括文件和符号链接）时拒绝覆盖；失败时可能留下不完整环境，请先确认未被服务使用，再人工处理。新版本请在独立目录准备并验证，保留旧版本以便回滚。默认使用执行环境的 pip 配置，事先核对可信包源、代理及证书；可事先配置兼容目标系统与 Python 的离线 wheel 源。当前依赖清单包含测试依赖，且传递依赖未完全锁定。`INIT_PYTHON` 仅用于创建环境；如果运行时设置了 `SERVER_PYTHON`，其值及 systemd `ExecStart` 须与实际使用的 Python 路径一致。初始化成功不代表数据库或服务已验证。
+
 `./scripts/server_run.sh check|status|start|stop|restart` 根据脚本位置使用当前服务端目录，不切换检出。`--help` 显示参数。可设置 `SERVER_UNIT`（默认 `zg-homework-server.service`）、`SERVER_PORT`（默认 `8000`）、`SERVER_PYTHON`（默认本模块 `.venv/bin/python`，须为绝对路径）。路径仅支持 ASCII 字母、数字、`_-. /`（不含空格）。脚本本身需要 Python 3，服务端环境需要 Python 3.12+ 和已安装的 Uvicorn。
 
 归档的 `scripts/production.env.example` 和 `scripts/zg-homework-server.service.example` 提供占位符模板。systemd 生产环境固定使用 `/etc/zg-homework-server/env` 和 `/etc/systemd/system/zg-homework-server.service`。首次安装时确认目标不存在，再由管理员手动安装模板并替换全部 `__...__` 占位符；打包和运行脚本不会安装或覆盖配置。迁移已有部署时先备份并核对原模块 `.env` 和 unit，手动将所需应用设置转换为下述格式；目标文件已存在时不要覆盖，先备份并人工合并。目录和配置文件应由可信管理员管理，仅允许管理员和服务账号读取配置，禁止非授权用户写入；服务账号还需有目录遍历权限。unit 亦须仅允许可信管理员修改。

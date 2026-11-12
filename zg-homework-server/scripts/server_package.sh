@@ -13,7 +13,7 @@ import tempfile
 MODULE = 'zg-homework-server'
 TREE = 'app'
 FILES = ('requirements.txt', '.env.example', 'Dockerfile', '.dockerignore',
-         'README.md', 'scripts/server_run.sh', 'scripts/server_package.sh',
+         'README.md', 'scripts/server_run.sh', 'scripts/server_package.sh', 'scripts/init_check.sh',
          'scripts/production.env.example', 'scripts/zg-homework-server.service.example')
 SERVER = True
 

@@ -7,13 +7,14 @@ After=network.target
 
 [Service]
 Type=simple
-User=__SERVICE_USER__
-Group=__SERVICE_GROUP__
-WorkingDirectory=__SERVER_MODULE_DIR__
+User=root
+Group=root
+WorkingDirectory=/data/apps/zg-homework-server
+#指向专属配置
 EnvironmentFile=/etc/zg-homework-server/env
-Environment=PYTHONDONTWRITEBYTECODE=1
 Environment=ZG_HOMEWORK_SYSTEMD_PRODUCTION=1
-ExecStart=__SERVER_PYTHON__ -m uvicorn app.main:app --host 127.0.0.1 --port __SERVER_PORT__ --workers 1
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/data/apps/zg-homework-server/.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1
 KillMode=control-group
 
 [Install]
