@@ -200,7 +200,7 @@ def main() -> int:
     su = next((u for u in ul.get("data", {}).get("list", []) if u["username"] == roles["student"]), None)
 
     # 18. 登录后可自助修改当前账户密码（PRD 5.1、迭代 v2.1 条目 11）
-    #     入口：Web 右上角菜单 / 学生「我的」页；移动端四角色「我的」页
+    #     入口：Web 右上角菜单 / 学生「我的」页；小程序端四角色「我的」页
     #     本组会临时改动学生密码，末尾改回原值，避免在库里留下非预期密码的账号。
     old_pwd = "test123456"
     new_pwd = "test654321"
