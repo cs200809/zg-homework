@@ -1,84 +1,30 @@
 # zg-tsp-docs
 
-学习兴趣培养积分系统 —— **文档与验收仓库**。
-
-本仓库是跨模块的**唯一权威契约来源**。三个功能模块各自独立仓库发布，
-接口契约以本仓库的 [PRD](sys_doc/PRD.md) 为准。
+本目录是单一仓库中的文档与契约模块。[PRD](sys_doc/PRD.md) 是需求与接口契约的权威来源；服务端和 Web 分别位于同仓的 `zg-tsp-server/`、`zg-tsp-web/`，保留独立依赖与构建边界。微信小程序代码位于仓外的 `~/WeChatProjects/HomeworkPoints`，见 [小程序规划](sys_doc/小程序.md)。
 
 ## 内容
 
 | 路径 | 说明 |
-|------|------|
-| `sys_doc/PRD.md` | 完整产品需求文档 v2.2 —— 数据模型、接口清单、权限矩阵、验收标准 |
-| `sys_doc/config.md` | 各环境配置项（数据库等） |
-| `scripts/acceptance_check.py` | 业务验收脚本：对照 PRD 第 12 节逐条调真实接口验证 |
-| `scripts/independence_check.py` | 模块独立性静态检查：依赖自封闭、零跨模块引用、无硬编码地址 |
+|---|---|
+| `sys_doc/PRD.md` | 产品需求、接口契约和验收标准（v2.3） |
+| `sys_doc/config.md` | 环境配置 |
+| `sys_doc/小程序.md` | 小程序规划、分期与验收 |
+| `sql/init.sql` | 从服务端 ORM 生成的部署 SQL |
+| `scripts/independence_check.py` | 服务端与 Web 的静态模块边界检查 |
+| `scripts/acceptance_check.py` | 通过真实接口执行的业务验收 |
 
-## 三个模块仓库
+## 检查与验收
 
-| 仓库 | 内容 | 技术栈 |
-|------|------|--------|
-| [zg-tsp-server](https://github.com/your-org/zg-tsp-server) | 服务端 | Python 3.12 / FastAPI / SQLAlchemy 2.0 / MySQL 8 |
-| [zg-tsp-web](https://github.com/your-org/zg-tsp-web) | Web 管理端 | React 18 / Vite 6 / Ant Design 5 |
+在仓库根目录运行 `make check`，仅做静态模块边界检查，不连接数据库或服务端。它不覆盖仓外小程序，也不能替代运行时验收。
 
-微信小程序端为**第四个独立仓库**（原生小程序，位于本聚合检出之外），
-规划与验收见 [小程序.md](sys_doc/小程序.md)。
-
-**四角色 × 两平台全覆盖**：学生 / 家长 / 老师 / admin 在小程序端与 Web 端均提供，
-差异仅在交互形态（PRD 第 9 节）。小程序端老师 / admin 端按 PRD §9.6 排在二期。
-
-## 聚合检出（联调用）
-
-三个模块独立仓库，联调时需同级检出：
-
-```
-workspace/
-├── zg-tsp-docs/       ← 本仓库
-├── zg-tsp-server/
-└── zg-tsp-web/
-```
-
-各模块仍可**单独检出、单独安装依赖、单独启动、单独打包**（PRD 2.2.1），
-聚合检出只是为了让 Vite 代理与验收脚本能同时访问各模块。
-
-## 验收脚本用法
-
-需在聚合目录下运行（脚本会定位同级的 `zg-tsp-server`）：
+业务验收需服务端运行在 `http://127.0.0.1:8000`，并提供已有管理员密码：
 
 ```bash
-# 1. 启动服务端
-cd zg-tsp-server && uvicorn app.main:app --host 127.0.0.1 --port 8000
-
-# 2. 业务验收（PRD 第 12 节）
-python zg-tsp-docs/scripts/acceptance_check.py
-
-# 3. 独立性检查
-python zg-tsp-docs/scripts/independence_check.py
+ACCEPTANCE_ADMIN_PASSWORD='<admin密码>' make acceptance
 ```
 
-> `acceptance_check.py` 会自动确保 admin 可登录（必要时重置本地库密码）。
-> 两个脚本都只读或写测试数据，**不删表**。
+**业务验收会通过真实接口创建持久数据并修改积分规则**，请仅对专用隔离数据库运行；脚本不会自动重置管理员密码。服务端 pytest 同样会写真实 MySQL，可能调用删除接口；测试目录被忽略，缺失或未收集到测试不算成功。
 
-## 接口契约
+## 契约变更
 
-全 POST + Body，参数不携带于 URL。统一响应：
-
-```json
-{ "code": 0, "message": "ok", "data": {} }
-```
-
-错误码：`0` 成功 / `400` 参数错误 / `401` 未认证 / `403` 无权限 /
-`404` 不存在 / `429` 限流 / `500` 服务端错误
-
-完整接口清单见 [PRD 第 7 节](sys_doc/PRD.md)。
-
-## 变更约定
-
-PRD 是跨模块契约，**修改 PRD 需同步通知各模块仓库**：
-
-- 新增/修改接口 → 服务端实现后，各客户端同步
-- 修改字段语义（如 `daily_limit` 含义）→ 各模块都要改
-- 数据模型变更 → 服务端迁移 + 客户端类型定义同步
-
-各模块的客户端类型定义（`types.ts` / 小程序端 `utils/` 下的常量）以 PRD 为准，
-但**它们是各自仓库的副本**，改 PRD 后需手动同步。
+接口或数据语义变化时，先更新 PRD，再同步服务端及各客户端。Web 的 `src/api/types.ts` 和小程序中的客户端定义是手工副本，须手动维护。业务接口通常使用 POST 和请求体；上传使用 multipart，静态文件和文档接口使用 GET。

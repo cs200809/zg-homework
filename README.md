@@ -1,117 +1,60 @@
 # zg-tsp
 
-学习兴趣培养积分系统 —— 聚合仓库。
+学习兴趣培养积分系统：服务端、Web 端与文档在同一仓库的三个模块目录中维护。
 
-> **本仓库已拆分为 3 个独立仓库**（决策 6）。
-> 这里的代码是拆分时的**快照**，用于追溯与聚合检出；日常开发请在各自独立仓库进行。
-> 微信小程序端是**第四个独立仓库**，位于本聚合检出之外，规划见 `zg-tsp-docs/sys_doc/小程序.md`。
+| 目录 | 内容 | 技术栈 |
+|---|---|---|
+| `zg-tsp-server/` | 服务端 | Python / FastAPI / SQLAlchemy / MySQL 8 |
+| `zg-tsp-web/` | Web 端 | React / Vite / Ant Design |
+| `zg-tsp-docs/` | 契约、配置与验收 | Markdown / Python |
 
-## 独立仓库
+模块保留各自依赖清单、构建与发布边界。微信小程序是仓外独立仓库，位于 `~/WeChatProjects/HomeworkPoints`，见 [小程序规划](zg-tsp-docs/sys_doc/小程序.md)。需求与接口契约以 [PRD](zg-tsp-docs/sys_doc/PRD.md) 为准。
 
-| 仓库 | 内容 | 技术栈 |
-|------|------|--------|
-| `zg-tsp-server` | 服务端 | Python 3.12 / FastAPI / SQLAlchemy 2.0 / MySQL 8 |
-| `zg-tsp-web` | Web 管理端 | React 18 / Vite 6 / Ant Design 5 |
-| `zg-tsp-docs` | **文档与契约**（PRD、配置、验收脚本） | Markdown / Python |
+## 快速开始
 
-各仓库已生成在 `../zg-tsp-repos/`（同级目录），可独立检出、提交、发版。
-
-## 拆分方式
-
-用 `git subtree split` 保留完整提交历史：
+以下命令从仓库根目录执行，需要 Python 3.12、Node.js >= 20、MySQL 8 及 mysql 客户端。先配置并确认目标数据库，再初始化，最后启动服务：
 
 ```bash
-git subtree split --prefix=zg-tsp-server -b split/zg-tsp-server
-git subtree split --prefix=zg-tsp-web    -b split/zg-tsp-web
-git subtree split --prefix=zg-tsp-docs   -b split/zg-tsp-docs
+# 创建脚本默认使用的根目录虚拟环境，并用同一解释器安装依赖
+python3.12 -m venv .venv
+.venv/bin/python -m pip install -r zg-tsp-server/requirements.txt
+npm --prefix zg-tsp-web install
+
+# 首次配置；若 .env 已存在，跳过复制以免覆盖
+cp zg-tsp-server/.env.example zg-tsp-server/.env
+# 编辑 zg-tsp-server/.env：设置 DATABASE_URL、JWT_SECRET
+# 确认 MySQL 连接、库名及 SQL 来源均为预期的开发环境后执行
+make db-init
+
+make help
+make dev
 ```
 
-各分支根目录即模块根目录，`git clone` 后无需再调整路径。
+`make db-init` 会写入真实数据库；默认不删除数据库。脚本读取 `.env` 的 `DATABASE_URL`，`MYSQL_*` 环境变量可覆盖其中的连接信息；服务端则优先读取环境变量 `DATABASE_URL`。执行前确认两者指向同一目标，且未意外指定 `REPOS_DIR`。脚本只读取环境变量 `ADMIN_INIT_PASSWORD`，不读取 `.env` 中的该项；未通过环境变量设置时会生成随机密码。新建 admin 时请妥善保存显示的密码并在首次登录后修改。服务启动也会对目标库执行 `create_all`，但不会自动写入种子。
 
-## 聚合检出（联调用）
+如使用其他虚拟环境，请通过 `VENV_PY` 指定其 Python，并用该解释器安装依赖。Web 默认地址为 <http://localhost:5173>；健康检查使用 `POST /homework_api/health`，例如 `curl -X POST http://127.0.0.1:8000/homework_api/health`。
 
-各模块仍可单独检出、单独安装依赖、单独启动、单独打包（PRD 2.2.1）。
-聚合检出仅为联调方便：
+| 命令 | 用途 |
+|---|---|
+| `make dev` / `make server` / `make web` | 启动两个服务或其中之一 |
+| `make status` / `make logs` | 查看状态 / 跟随日志 |
+| `make stop` | 停止进程；可能终止占用配置端口的其他进程，使用前确认 |
+| `make db-init` | 初始化真实数据库；`ARGS=--drop` 会删库重建 |
+| `make test` | 运行服务端 pytest |
+| `make build` | Web 类型检查与构建 |
+| `make check` | 静态模块边界检查，无需服务端或数据库 |
+| `make acceptance` | 运行真实接口业务验收 |
 
-```
-workspace/
-├── zg-tsp-docs/       ← 契约与验收脚本
-├── zg-tsp-server/
-└── zg-tsp-web/
-```
+**测试和业务验收均会写真实数据库。** pytest 会提交数据并可能删除数据；测试目录不入库，缺失或未收集到测试时不算成功。请明确配置专用隔离 MySQL 后运行。业务验收要求服务端运行在 `127.0.0.1:8000`，并设置 `ACCEPTANCE_ADMIN_PASSWORD`；它会创建持久数据，不能当作只读检查。当前脚本跳过修改共享积分规则和删除数据的验收项。
 
-```bash
-# 终端 1：服务端
-cd zg-tsp-server && uvicorn app.main:app --host 127.0.0.1 --port 8000
+## 数据库初始化
 
-# 终端 2：Web 端（Vite 代理 /homework_api → 127.0.0.1:8000（保留前缀））
-cd zg-tsp-web && npm run dev
+`scripts/init.sh` 默认使用本仓库的 `zg-tsp-docs/sql/init.sql` 和 `zg-tsp-server/.env`；可用 `REPOS_DIR` 显式指定其他代码目录，无效时直接报错。初始化会写真实数据库，执行前确认数据库与 SQL 来源；`--drop` 删库且需二次确认。
 
-# 终端 3：验收脚本
-python zg-tsp-docs/scripts/acceptance_check.py
-python zg-tsp-docs/scripts/independence_check.py
-```
-
-## 快速开始（服务端）
-
-```bash
-cd zg-tsp-server
-pip install -r requirements.txt
-cp .env.example .env          # 按需改 DATABASE_URL / JWT_SECRET
-
-python -m app.seed.initial_data          # 建表 + 种子
-python -m app.seed.apply_comments        # 补齐字段中文注释
-
-uvicorn app.main:app --host 0.0.0.0 --port 8000
-```
-
-健康检查：`POST /homework_api/health` → `{"code":0,"message":"ok","data":{"status":"ok","env":"dev"}}`（`env` 随环境而变）
-
-### 部署用数据库初始化
-
-部署到空机器时，一条命令完成「建库 → 建表 → 写积分规则及批改档位 → 建 admin」：
-
-```bash
-./scripts/init.sh              # 幂等，可重复执行
-./scripts/init.sh --drop       # 先删库重建（危险，需二次确认）
-```
-
-它导入的是 `zg-tsp-docs/sql/init.sql` —— 该文件由 `python -m app.seed.export_ddl`
-从 ORM 生成，含全部表的中文 COMMENT。admin 初始密码取 `ADMIN_INIT_PASSWORD`
-环境变量，未设则随机生成。仅在本次密码生效时显示随机密码或提示使用了环境变量，首登强制改密。已有正常密码不会被覆盖，`ADMIN_INIT_PASSWORD` 不能用于强制重置密码；已有 admin 的密码哈希恰为 `__ADMIN_BCRYPT_HASH__` 时会被修复。直接导入未经替换的 SQL 会创建表和规则，但不会创建 admin；应使用初始化脚本，或先将占位符替换为有效 bcrypt 哈希再导入。
-
-需要联调数据（测试账号、班级、成语题库）时，另跑 `python -m app.seed.initial_data`。
-
-## 功能范围
-
-**四角色**（admin / teacher / student / parent）× **两平台**（小程序 + Web）全覆盖。
-小程序端老师 / admin 端按 PRD §9.6 排在二期。
-
-| 模块 | Phase | 状态 |
-|------|-------|------|
-| 服务端 | P1 认证（JWT + 老师邀请码一码一用） | ✅ |
-| 服务端 | P1b MySQL 15 张表 + 全字段中文注释 | ✅ |
-| 服务端 | P1.5 admin 基础（邀请码 / 用户 / 统计） | ✅ |
-| 服务端 | P1.6 积分规则管理 + 规则缓存 + 积分发放 | ✅ |
-| 服务端 | P2 班级与作业（打点 / 迟交 / 用时） | ✅ |
-| 服务端 | P3 签到与排行榜 | ✅ |
-| 服务端 | P4 家长绑定与扣分 | ✅ |
-| 服务端 | P5 课后阅读（心跳防挂机） | ✅ |
-| 服务端 | P6 数独 + 成语接龙 + 题库管理 | ✅ |
-| Web | P7 四角色页面 | ✅ |
-| 小程序 | P8 四角色页面（原生小程序，独立仓库） | 🔄 一期学生 + 家长 |
-| 全局 | P9 联调验收 | ✅ |
-
-## 验证状态
-
-| 检查项 | 结果 |
-|--------|------|
-| 服务端 pytest | 294 passed |
-| PRD 业务验收（第 12 节） | 34 通过 / 0 失败（11 项主动跳过以免污染共享数据） |
-| 模块独立性检查 | 8/8 |
-| Web `tsc` + `vite build` | ✅ |
+SQL 由服务端 `python -m app.seed.export_ddl` 从 ORM 生成。脚本用 `ADMIN_INIT_PASSWORD` 或随机密码替换 admin 哈希占位符；不会覆盖已有正常密码。直接导入未替换的 SQL 不能正常初始化 admin。开发联调种子可用 `python -m app.seed.initial_data`，同样会操作数据库。
 
 ## 文档
 
-完整需求与契约见 [`zg-tsp-docs/sys_doc/PRD.md`](zg-tsp-docs/sys_doc/PRD.md)。
-配置项见 [`zg-tsp-docs/sys_doc/config.md`](zg-tsp-docs/sys_doc/config.md)。
+- [需求、接口及验收标准](zg-tsp-docs/sys_doc/PRD.md)
+- [环境配置](zg-tsp-docs/sys_doc/config.md)
+- [小程序规划与分期](zg-tsp-docs/sys_doc/小程序.md)：一期学生与家长，老师与 admin 排在二期。

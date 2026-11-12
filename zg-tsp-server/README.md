@@ -4,7 +4,7 @@
 
 ## 独立性
 
-本模块**可单独检出、单独启动、单独打包**，不依赖仓库内其他模块：
+当前聚合检出包含 `zg-tsp-server/`、`zg-tsp-web/`、`zg-tsp-docs/` 三个模块；微信小程序是仓外独立仓库。服务端也可单独检出、启动和打包，运行时不依赖其他模块源码：
 
 - 与客户端**仅通过 HTTP 接口**通信，不引用任何其他模块源码
 - 依赖自封闭：`requirements.txt` 为唯一依赖清单
@@ -19,16 +19,19 @@ pip install -r requirements.txt
 
 # 2. 配置
 cp .env.example .env
-# 生产环境务必修改 JWT_SECRET 与 CORS_ORIGINS
+# 设置 DATABASE_URL、JWT_SECRET，生产环境还需检查 CORS_ORIGINS
 
-# 3. 运行
-uvicorn app.main:app --host 0.0.0.0 --port 8000
+# 3. 确认目标 MySQL 库后初始化表和联调种子（见下方数据库章节）
+python -m app.seed.initial_data
+
+# 4. 运行
+uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
 健康检查：
 
 ```bash
-curl -X POST http://127.0.0.1:8000/health
+curl -X POST http://127.0.0.1:8000/homework_api/health
 # {"code":0,"message":"ok","data":{"status":"ok","env":"dev"}}
 ```
 
@@ -83,14 +86,16 @@ tests/               pytest 测试
 
 ## 数据库：MySQL
 
-数据落在 MySQL `zg_tsp`，字符集 **utf8mb4**（正确存储中文与 emoji）。
+数据落在 `DATABASE_URL` 指定的 MySQL 库，默认库名 `zg_tsp`，字符集 **utf8mb4**。先确保数据库已存在，并核对实际连接；环境变量 `DATABASE_URL` 优先于 `.env`。开发种子含已知密码的联调账号，不适用于生产环境。
 
 ```bash
 # 1. 建表 + 种子（幂等，可重复执行）
 python -m app.seed.initial_data
 
-# 2. 清库重建（危险，仅开发用）
-python -m app.seed.initial_data --reset
+# 2. 危险：删除当前目标库的 ORM 表及其全部数据后重建，无二次确认
+# 仅在确认是可丢弃的隔离库、备份并明确需要重置时执行：
+# python -m app.seed.initial_data --reset
+# 不会删除数据库本身，也不是常规初始化步骤；原有表结构升级需单独迁移。
 ```
 
 > 连接配置在 `.env` 的 `DATABASE_URL`。
@@ -133,7 +138,8 @@ python -m app.seed.initial_data --reset
 ## 测试
 
 ```bash
-pytest                    # 316 个用例
+# 明确指向专用隔离 MySQL 数据库，替换连接信息后执行
+DATABASE_URL='mysql+pymysql://user:password@127.0.0.1:3306/zg_tsp_test?charset=utf8mb4' pytest
 ```
 
 覆盖：
@@ -167,21 +173,9 @@ pytest                    # 316 个用例
   单条与批量删除；干扰项不足时服务端补齐
 - **通用**：统一响应格式、无入参接口接受空 Body
 
-> **测试库约定：test_ 前缀 + 只增不删**
+> **测试必须使用专用隔离数据库。** 测试连接真实 MySQL，会提交数据并调用包括删除在内的业务接口，可能留下数据或修改共享状态；不能依赖用户名 `test_` 前缀或假设只增不删。不要在开发库或生产库运行。`tests/` 不入库，干净检出可能缺失；未收集到测试不代表测试通过。
 >
-> 测试直接跑在开发库 `zg_tsp` 上（不另建测试库）。为保证用例互不干扰：
-
-> - 每个用例用**随机后缀的唯一用户名**（如 `test_a1b2c31_stu`），天然不冲突
-> - 所有测试数据统一以 **test_ 前缀**标识，与真实账号（admin、teacher01…）
->   和种子邀请码（CLS2024、TEACH2024）明确区分
-> - 只做 INSERT / UPDATE，**从不 TRUNCATE、从不 DELETE**
-> - **夹具不得改动真实 admin 账号** —— admin_token 用独立的临时 admin 账号。
-   早期版本直接覆盖真实 admin 的密码，导致每跑一次 pytest，开发者按文档里的
-   密码登录就会突然 400（见 `tests/test_fixture_isolation.py`）
-> - **规则表也是共享状态**：改规则的用例必须用 `set_rule` 夹具自备前置条件，
-   不能依赖种子默认值（否则受其他用例影响）
->
-> 清理残留的测试数据：
+> 清理工具有破坏性，先确认 `DATABASE_URL` 实际目标并检查 dry-run，确认范围后才考虑执行：
 >
 > ```bash
 > python -m app.utils.purge_test_data --dry-run   # 先看统计
@@ -189,11 +183,11 @@ pytest                    # 316 个用例
 > python -m app.utils.purge_test_data --by-keep-list  # 只留种子数据，连旧命名残留一起清
 > ```
 >
-> 需要干净起点时手动执行 `python -m app.seed.initial_data --reset`。
+> 不要把 `--reset` 当作常规清理：它无二次确认地删掉目标库 ORM 表及数据，具体限制见上方数据库章节。
 
 ## 接口契约
 
-全 POST + Body，参数不携带于 URL。统一响应 `{code, message, data}`。
+业务接口使用 `/homework_api` 前缀，通常为 POST + JSON Body，文件上传使用 multipart；上传文件通过 GET 提供。统一响应 `{code, message, data}`。
 完整清单见 PRD 第 7 节（`zg-tsp-docs` 仓库的 `sys_doc/PRD.md`）——
 这是与其他模块的唯一契约来源。
 
@@ -214,31 +208,31 @@ pytest                    # 316 个用例
 - [ ] P6 游戏（含成语题库导入）
 ## 验收脚本
 
-验收脚本随 `zg-tsp-docs` 仓库分发，需在聚合仓库（四模块同级）下运行：
+验收脚本位于聚合检出的 `zg-tsp-docs`；以下从聚合仓库根目录运行。业务验收需要服务端运行在 `127.0.0.1:8000`，并提供已有 admin 的密码：
 
 ```bash
 # 业务验收（PRD 第 12 节，对真实接口逐条验证）
-python zg-tsp-docs/scripts/acceptance_check.py
+ACCEPTANCE_ADMIN_PASSWORD='<已有 admin 密码>' .venv/bin/python zg-tsp-docs/scripts/acceptance_check.py
 
 # 模块独立性检查（PRD 第 12 节「模块独立性」）
 python zg-tsp-docs/scripts/independence_check.py
 ```
 
-> 验收脚本会自动确保 admin 可登录（必要时重置本地库密码）。
+> 业务验收调用真实接口并留下持久数据，建议使用隔离环境；脚本不会重置 admin，且跳过修改共享积分规则和删除数据的验收项。独立性检查是静态检查，仅覆盖 server 和 web，无需启动服务或数据库。
 
 ## 联调前端
 
-各模块独立仓库，需分别检出。聚合目录下：
+聚合检出中三个模块目录同级；也可使用分别检出的模块。以下在聚合目录下执行：
 
 ```bash
 # 终端 1：启动服务端
 cd zg-tsp-server && uvicorn app.main:app --host 127.0.0.1 --port 8000
 
-# 终端 2：启动 Web 端（Vite 代理 /api → 127.0.0.1:8000）
+# 终端 2：启动 Web 端（Vite 代理 /homework_api → 127.0.0.1:8000）
 cd zg-tsp-web && npm run dev
 ```
 
 浏览器打开 http://localhost:5173
 
-> Vite 代理会把 `/api/xxx` 改写为 `/xxx` 再转发（服务端路径无 `/api` 前缀），
-> 服务端地址在 `zg-tsp-web/.env.development` 的 `VITE_PROXY_TARGET` 配置。
+> Vite 代理保留 `/homework_api` 前缀转发，服务端路由也带此（前缀不可剥除）；
+> `VITE_PROXY_TARGET` 可配置服务端地址，默认 `http://127.0.0.1:8000`。

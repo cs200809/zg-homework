@@ -300,6 +300,10 @@ mkdir -p "$LOG_DIR"
 CMD="${1:-start}"
 
 case "${CMD}" in
+  start|server|web|all) info "代码目录 REPOS_DIR：${REPOS_DIR}" ;;
+esac
+
+case "${CMD}" in
   server)  start_server ;;
   web)     start_web ;;
   all)

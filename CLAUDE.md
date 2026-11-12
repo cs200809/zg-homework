@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 仓库形态
 
-本项目分为三个独立仓库，不是一个可整体构建的单体。**当前聚合检出只有 server、web、docs 三个目录**。微信小程序端是第四个独立仓库，位于 `~/WeChatProjects/HomeworkPoints`，**不在本检出中**。下表描述完整工作区，而非保证所有目录都在当前检出：
+本项目采用单一仓库，包含服务端、Web 和文档三个模块目录。微信小程序端是仓外独立仓库，位于 `~/WeChatProjects/HomeworkPoints`，不在本检出中。各模块保留独立依赖与构建边界：
 
 | 目录 | 内容 | 技术栈 |
 |------|------|--------|
@@ -12,17 +12,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `zg-tsp-web/` | Web 管理端 | React 18 / Vite 6 / Ant Design 5 / Zustand 5 |
 | `zg-tsp-docs/` | **契约与验收**（PRD、config、验收脚本） | Markdown / Python |
 
-**需求与 API 契约的权威来源是 `zg-tsp-docs/sys_doc/PRD.md`**（v2.2）。它同时承担了 PRD、API 契约、数据库建表 SQL、权限矩阵、验收清单五重角色。改接口前先读它；改完后要同步 `zg-tsp-web/src/api/types.ts`（这份是 PRD 的手工副本，无自动生成）。
+**需求与 API 契约的权威来源是 `zg-tsp-docs/sys_doc/PRD.md`**（v2.3）。它同时承担了 PRD、API 契约、数据库建表 SQL、权限矩阵、验收清单五重角色。改接口前先读它；改完后要同步 `zg-tsp-web/src/api/types.ts`（这份是 PRD 的手工副本，无自动生成）。
 
 ### 三个必须知道的结构性事实
 
-1. **微信小程序端是第四个独立仓库**，位于 `~/WeChatProjects/HomeworkPoints`，**不在当前聚合检出内**。它是原生小程序（WXML/WXSS/JS），规划与验收见 `zg-tsp-docs/sys_doc/小程序.md`。服务端与 Web 端无需为它做任何改动。
+1. **微信小程序端是仓外独立仓库**，位于 `~/WeChatProjects/HomeworkPoints`，**不在本检出内**。它是原生小程序（WXML/WXSS/JS），规划与验收见 `zg-tsp-docs/sys_doc/小程序.md`。服务端与 Web 端无需为它做任何改动。
 
-2. **`scripts/dev.sh` 默认优先启动本目录的代码**。有效的 `REPOS_DIR` 优先；否则探测 `$ROOT` → `../zg-tsp-repos` → `~/zg-tsp-repos`。若显式指定或回退到独立仓库，其代码可能与本检出不同步；改完代码后确认运行的是哪一份。
+2. **`scripts/dev.sh` 默认启动本仓库的代码**。`REPOS_DIR` 可显式覆盖代码目录，无效时直接报错；使用其他检出时应确认代码来源。
 
 3. **PRD 里的建表 SQL 是 SQLite 方言**，而服务端实际跑 MySQL 8。库表结构以 `zg-tsp-server/app/models/entities.py`（15 张表）为准，PRD 第 4.1 节仅作参考。
 
 ## 常用命令
+
+根目录 `make help` 列出入口：`make dev`、`make server`、`make web`、`make status`、`make logs`、`make stop`、`make db-init`、`make test`、`make build`、`make check` 和 `make acceptance`。`make check` 仅做静态检查；`make test` 和 `make acceptance` 会写真实数据库，必须使用隔离库。pytest 未收集到测试时不算成功。`make stop` 可能终止占用配置端口的其他进程。
 
 ### 服务端
 
@@ -60,7 +62,7 @@ uvicorn app.main:app --host 127.0.0.1 --port 8000
 两者可共存：先跑 `init.sh`，需要联调数据再跑 `initial_data`
 （它对已存在的表幂等，只补种子）。
 
-**健康检查是 POST，不是 GET**：`curl -X POST http://127.0.0.1:8000/health` 返回统一响应，`data` 含 `status` 和当前 `env`。浏览器直接打开会 405（CORS `allow_methods` 只放行 `POST, OPTIONS`）。
+**健康检查是 POST，不是 GET**：`curl -X POST http://127.0.0.1:8000/homework_api/health` 返回统一响应，`data` 含 `status` 和当前 `env`。浏览器直接打开会 405（CORS `allow_methods` 只放行 `POST, OPTIONS`）。
 
 测试（**需要可连的 MySQL**，不 mock、不用 sqlite）：
 
@@ -90,10 +92,9 @@ npm run preview
 
 ```bash
 ./scripts/dev.sh start|server|web|all|stop|status|logs
-./scripts/split_repos.sh split|push|status     # subtree 拆分为 3 个独立仓库
 ```
 
-`dev.sh` 是 POSIX `sh`（**不能用数组、`[[ ]]`、进程替换**），日志与 PID 落在 `.dev-logs/`。**`split_repos.sh split` 会删除已有目标目录后重建；`dev.sh stop` 可能终止占用配置端口的其他进程。**执行前确认目标及影响。`init.sh` 也会自动探测仓库位置，执行前确认 SQL 和数据库来源。
+`dev.sh` 是 POSIX `sh`（**不能用数组、`[[ ]]`、进程替换**），日志与 PID 落在 `.dev-logs/`。**`dev.sh stop` 可能终止占用配置端口的其他进程。**执行前确认目标及影响。`init.sh` 默认使用本仓库；`REPOS_DIR` 可显式覆盖，无效时直接报错。执行前确认 SQL 和数据库来源。
 
 ### 云服务器部署（裸机 systemd + nginx）
 
@@ -145,7 +146,7 @@ ACCEPTANCE_ADMIN_PASSWORD='<admin密码>' python zg-tsp-docs/scripts/acceptance_
 python zg-tsp-docs/scripts/independence_check.py   # 模块独立性静态检查，无需运行时
 ```
 
-`acceptance_check.py` 硬编码 `http://127.0.0.1:8000`，需要管理员密码，会通过真实接口产生持久测试数据并修改积分规则。独立性检查只覆盖 `zg-tsp-server` 与 `zg-tsp-web` 两个模块，是静态检查、无需服务端运行；微信小程序端不在聚合检出内，不参与该检查。
+`acceptance_check.py` 硬编码 `http://127.0.0.1:8000`，需要管理员密码，会通过真实接口产生持久测试数据并修改积分规则。独立性检查只覆盖 `zg-tsp-server` 与 `zg-tsp-web` 两个模块，是静态检查、无需服务端运行；微信小程序端不在本检出内，不参与该检查。
 
 ## 服务端架构
 
@@ -254,21 +255,9 @@ src/
 - **`.env.example` 的无效 `HOST` / `PORT`**：已删除，改为注明 host/port 由 uvicorn 命令行决定。
 - **PRD 与实现不一致**：PRD 2.1 的 SQLite 已改为 MySQL 8；第 7 节接口清单已补 `POST /games/idiom/question`。
 
-## 本机构建环境
-
-`../zg-tsp-repos/` 是本机三个独立仓库的检出。
-
-**改动时务必确认使用的是哪份代码**：`scripts/dev.sh` 优先使用有效的 `REPOS_DIR`；
-否则 `dev.sh` 优先 `$ROOT`，再探测 `../zg-tsp-repos` → `~/zg-tsp-repos`。
-`init.sh` 的默认探测顺序**与 `dev.sh` 不同**（它先探 `../zg-tsp-repos`，本快照排其后），
-初始化前确认来源。
-无效或不完整的覆盖值可能回退自动探测；检查脚本输出。
-
-`scripts/dev.sh` 现在会在启动前打印「代码来源与新鲜度报告」（REPOS_DIR 命中哪份代码、各模块 git 状态、与本快照的差异条目数），用它确认跑的是哪一份。
-
 ## Git 约定
 
-- 主分支 `main`。三个独立仓库通过 `git subtree split --prefix=<模块>` 拆出，历史保留在 `split/<模块>` 分支（本地已有 `split/zg-tsp-server`、`split/zg-tsp-web`、`split/zg-tsp-docs`；`split/zg-tsp-android`、`split/zg-tsp-ios` 是移动端下线前的历史留存，可用于恢复）。
+- 主分支 `main`；服务端、Web 和文档在同一仓库中维护。历史拆分分支与其他检出可能仍存在，不应未经确认删除。
 - **服务端测试不入库**：`zg-tsp-server/tests/` 被 gitignore，本地测试属于联调资产，干净检出不一定存在。测试连接真实数据库且可能执行删除，使用专用隔离库。
 - `.dev-logs/`、`/dist/`、`.venv/`、各 `.env` 均不入库。
 - 根 `.claude/settings.local.json` 只有 `permissions.allow` 一个节点，无 deny/ask/env/hooks/mcpServers 配置。

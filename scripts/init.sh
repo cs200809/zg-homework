@@ -9,7 +9,8 @@
 #   ./scripts/init.sh --help
 #
 # 环境变量：
-#   REPOS_DIR            仓库所在目录（默认自动探测，顺序与 dev.sh 不同）
+#   REPOS_DIR            代码目录（默认脚本所在仓库；显式指定时须含
+#                        zg-tsp-docs/sql/init.sql 与 zg-tsp-server/）
 #   ADMIN_INIT_PASSWORD  新建或修复占位符账号的密码（不会重置已有正常密码）
 #   MYSQL_HOST/MYSQL_PORT/MYSQL_USER/MYSQL_PASSWORD/MYSQL_DATABASE
 #                        覆盖 .env 中 DATABASE_URL 的解析结果
@@ -52,33 +53,14 @@ for arg in "$@"; do
   esac
 done
 
-# --- 定位仓库目录 ---
-# 初始化脚本探测顺序：环境变量 → ../zg-tsp-repos → 本快照 → ~/zg-tsp-repos
-# 与 dev.sh 默认顺序不同；使用前须确认 SQL 和数据库来源。
-REPOS_DIR_ENV="${REPOS_DIR:-}"
-REPOS_DIR=""
-find_repos_dir() {
-  local candidates d
-  candidates=$(printf '%s\n' \
-    "${REPOS_DIR_ENV}" \
-    "${ROOT}/../zg-tsp-repos" \
-    "${ROOT}" \
-    "${HOME}/zg-tsp-repos"
-  )
-  while IFS= read -r d; do
-    [ -n "$d" ] || continue
-    if [ -f "$d/zg-tsp-docs/sql/init.sql" ] && [ -d "$d/zg-tsp-server" ]; then
-      REPOS_DIR="$(cd "$d" && pwd -P)"
-      return 0
-    fi
-  done <<EOF
-${candidates}
-EOF
-  return 1
-}
-
-find_repos_dir || die "找不到包含 zg-tsp-docs/sql/init.sql 的仓库目录。
-请在仓库根目录执行，或用 REPOS_DIR=<路径> 指定。"
+# --- 定位代码目录 ---
+# 默认本仓库；显式覆盖无效时立即报错，不回退到其他检出。
+REPOS_DIR="${REPOS_DIR:-${ROOT}}"
+if [ ! -f "${REPOS_DIR}/zg-tsp-docs/sql/init.sql" ] || [ ! -d "${REPOS_DIR}/zg-tsp-server" ]; then
+  die "代码目录无效：${REPOS_DIR}
+需要其中同时存在 zg-tsp-docs/sql/init.sql 与 zg-tsp-server/。"
+fi
+REPOS_DIR="$(cd "${REPOS_DIR}" && pwd -P)"
 
 INIT_SQL="${REPOS_DIR}/zg-tsp-docs/sql/init.sql"
 SERVER_DIR="${REPOS_DIR}/zg-tsp-server"
