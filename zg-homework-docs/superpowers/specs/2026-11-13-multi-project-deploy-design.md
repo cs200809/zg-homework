@@ -258,7 +258,7 @@ location /homework_api/ {
 **共同流程**
 
 1. 前置检查：`<deploy-dir>/releases` 存在（否则提示先跑 web `install.sh`）；模式 B 另需 node 依赖检查。
-2. 版本目录名：`web-<UTC 时间戳>-<内容短哈希>`，同一目录内唯一且可排序。
+2. 版本目录名：`web-<UTC 时间戳>-<内容哈希前 8 位>-<随机后缀>`，同一目录内唯一且可排序（随机后缀避免同一秒内连续两次发布撞名）。
 3. 校验产物存在 `index.html`；写入归属标记 `.web-run-owner`（内容 = 源码检出目录绝对路径 + `\n`；模式 A 下取包内记录的构建来源，取不到则写 `<unknown>`），与 `web_run.sh` 的标记格式一致，保证两套脚本不会互相误认 `current`。
 4. `nginx -t`：失败则**中止**，不切换 `current`、不 reload，删除本次版本目录。
 5. 原子切换：在 `<deploy-dir>` 下建临时符号链接指向新版本目录，`os.replace` 覆盖 `current`（与 `web_run.sh` 的 `publish()` 同一手法）。
@@ -272,8 +272,9 @@ location /homework_api/ {
 # 模式 A：上传静态包后发布（生产机）
 zg-homework-web/scripts/web_deploy.sh --package /tmp/zg-homework-web-static-20261113-101500.tar.gz
 
-# 模式 B：服务器本机构建并发布
+# 模式 B：服务器本机构建并发布（--source-dir 默认为脚本所在模块目录）
 zg-homework-web/scripts/web_deploy.sh --build
+zg-homework-web/scripts/web_deploy.sh --build --source-dir /data/apps/zg-homework-web
 ```
 
 **与 `web_run.sh` 的关系**：两者共用 `<deploy-dir>`、`releases/`、`current` 与 `.web-run-owner` 标记格式。`web_run.sh` 保持独占 nginx 模式不变，本方案不使用它；两套脚本的产物互不破坏。
