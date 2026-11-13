@@ -164,12 +164,12 @@ FILES = ('requirements.txt', '.env.example', 'Dockerfile', '.dockerignore',
 ' '''
 """安装服务端（占位实现，Task 2 填充）。"""
 print('尚未实现')
-sys.exit(1)
+raise SystemExit(1)
 ```
 
 并 `chmod +x`。
 
-> `sys` 未导入会在运行时抛 `NameError` 而不是干净退出——Task 2 会整体替换本文件内容。空壳只需保证 `server_package.sh` 的白名单路径存在且是普通文件。
+> 空壳只需保证 `server_package.sh` 的白名单路径存在且是普通文件。Task 2 会整体替换本文件内容。
 
 - [ ] **Step 6: 跑测试确认通过**
 
@@ -1426,16 +1426,9 @@ zg-homework-web/scripts/web_deploy.sh --package zg-homework-web-static-<ts>.tar.
 - **`proxy_pass` 不带末尾 `/`**：服务端路由自带 `/homework_api` 前缀，剥了会 404。
 - **`alias` 必须带末尾 `/`**：`alias /var/lib/zg-homework-web/current/;`。
 - **任何脚本都不得写** `/etc/nginx/nginx.conf`、`sites-available/`、`sites-enabled/`；只写自己的 `conf.d` 片段，且 reload 前必须 `nginx -t` 通过。
-- **`db_bootstrap.py` 不依赖 mysql 客户端**（用项目自带的 PyMySQL），且幂等：重复执行不重复插入，也**不覆盖已存在的 admin 密码**。
-- **渲染 `.env` 用 `deploy/render_env.sh`**（awk + 环境变量），**不要用 `sed -i`** —— BSD 与 GNU 的 `-i` 语义不同，且 `-v` 会吃掉密码里的反斜杠。
-- **无迁移框架**：`create_all()` 只建缺失的表，不给已有表加列。涉及表结构的升级需按 `app/seed/migrate_*.py` 单独执行迁移，迁移前备份数据库。
-```
-
-> 注意：上面两条 `db_bootstrap.py` 与 `deploy/render_env.sh` 的描述对应**不存在的文件**。`db_bootstrap.py` 在 `app/seed/` 下不存在，实际初始化入口是 `python -m app.seed.initial_data`；`deploy/render_env.sh` 不存在，env 由 `scripts/install.sh` 生成。**删除这两条**，改写为：
-
-```markdown
 - **生产配置由 `scripts/install.sh` 生成**（`/etc/zg-homework-server/env`，`0640 root:www-data`）：值中不得含 `'"\$` 或未替换的 `__…__` 占位符，`server_run.sh` 会直接拒绝。重复执行默认保留已有 `JWT_SECRET`（避免轮换密钥导致已签发 token 失效），需强制覆盖时用 `--force-env`。
 - **数据库初始化用 `python -m app.seed.initial_data`**：幂等，重复执行不重复插入，也不覆盖已存在的 admin 密码。它依赖项目自带的 PyMySQL，不需要 mysql 客户端。
+- **无迁移框架**：`create_all()` 只建缺失的表，不给已有表加列。涉及表结构的升级需按 `app/seed/migrate_*.py` 单独执行迁移，迁移前备份数据库。
 ```
 
 - [ ] **Step 4: 补充脚本清单说明**
