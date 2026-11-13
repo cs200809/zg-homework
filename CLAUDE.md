@@ -121,10 +121,13 @@ sudo sh scripts/install.sh \
      --database-url 'mysql+pymysql://user:pass@127.0.0.1:3306/zg_homework?charset=utf8mb4'
 sudo sh scripts/server_run.sh check
 
-# Web 端：生成 nginx 片段 → 发布静态包
+# Web 端：解压源码包（带 install.sh 与 web_deploy.sh）→ 生成 nginx 片段 → 发布静态包
+mkdir -p /data/apps/zg-homework-web
+tar -xzf /tmp/zg-homework-web-source-<ts>.tar.gz -C /data/apps/zg-homework-web --strip-components=1
 cd /data/apps/zg-homework-web
 sudo sh scripts/install.sh --api-upstream 127.0.0.1:8000
-sudo sh scripts/web_deploy.sh --package /tmp/zg-homework-web-static-<ts>.tar.gz
+sudo sh scripts/web_deploy.sh --package /tmp/zg-homework-web-static-<ts>.tar.gz \
+     --source-dir /data/apps/zg-homework-web
 ```
 
 Web 端的两个脚本要能在目标机上执行，**目标机上得有 `zg-homework-web/scripts/`**（把源码包 `web_package.sh --source` 传过去，或在目标机上放一份检出）。静态包本身只含 `index.html` 与 `assets/`。
@@ -134,9 +137,13 @@ Web 端的两个脚本要能在目标机上执行，**目标机上得有 `zg-hom
 ```bash
 sudo -u www-data bash -c '
   set -a; . /etc/zg-homework-server/env; set +a
-  cd /data/apps/zg-homework-server && ./.venv/bin/python -m app.seed.initial_data
+  cd /data/apps/zg-homework-server && PYTHONDONTWRITEBYTECODE=1 ./.venv/bin/python -m app.seed.initial_data
 '
 ```
+
+`PYTHONDONTWRITEBYTECODE=1` 不是可选项：手工跑 Python 会在检出目录里留下 `app/**/__pycache__/*.pyc`，
+而 `server_run.sh` 见到字节码就拒绝控制该单元（"app 中存在字节码"）。已污染的检出目录用
+`find /data/apps/zg-homework-server/app -name '__pycache__' -prune -exec rm -rf {} +` 清除。
 
 `initial_data` 幂等，重复执行不重复插入，**不覆盖已存在的 admin 密码**；`ADMIN_INIT_PASSWORD` 为空时随机生成密码并只打印一次。env 文件的取值不含引号、反斜杠、`$` 与首尾空白（`server_run.sh` 的硬约束），因此可以被 shell 正常 `source`。
 
@@ -154,15 +161,17 @@ sudo -u www-data bash -c '
 - **上传数据必须在代码目录之外**（默认 `/var/lib/zg-homework/`），否则升级覆盖代码时会丢文件。规则比「检出目录之外」更严：`UPLOAD_DIR` 与 `PRIVATE_HOMEWORK_DIR` 不得等于、也不得位于检出目录的**上级目录**之下，且两者互不重叠。
 - **`proxy_pass` 不带末尾 `/`**（剥了前缀后端会收到 `/login` 而不是 `/homework_api/login` → 404）；**`alias` 必须带末尾 `/`**（`alias /var/lib/zg-homework-web/current/;`）。
 - **任何脚本都不得写** `/etc/nginx/nginx.conf`、`sites-available/`、`sites-enabled/`；只写自己的 `conf.d` 片段，且 reload 前必须 `nginx -t` 通过（`nginx -t` 不通过就不切换、不 reload）。
-- **生产配置由 `scripts/install.sh` 生成**（`/etc/zg-homework-server/env`，`0640 root:www-data`）：值中不得含 `'"\$` 或未替换的 `__…__` 占位符，`server_run.sh` 会直接拒绝。重复执行时保留已有 `JWT_SECRET`（避免轮换密钥导致已签发 token 失效）与运维手填的键；需要整体重建时才加 `--force-env`（会重新生成 `JWT_SECRET`，存量 token 立即失效）。
+- **生产配置由 `scripts/install.sh` 生成**（`/etc/zg-homework-server/env`，`0640 root:www-data`）：值中不得含 `'"\$`、控制字符或首尾空白（对**所有**键）；未替换的 `__…__` 占位符同样被拒（限 `DATABASE_URL`、`JWT_SECRET`、`UPLOAD_DIR`、`PRIVATE_HOMEWORK_DIR`、`CORS_ORIGINS` 五个键）——`server_run.sh` 会直接拒绝。重复执行时保留已有 `JWT_SECRET`（避免轮换密钥导致已签发 token 失效）与运维手填的键；需要整体重建时才加 `--force-env`（会重新生成 `JWT_SECRET`，存量 token 立即失效）。
 - **端口改动要三处同步**：`install.sh --api-port`、`server_run.sh` 的 `SERVER_PORT` 环境变量、前端 `install.sh --api-upstream`。
+- **运维的主配置必须 `include /etc/nginx/conf.d/*.conf;`**，否则片段不会生效——而 `nginx -t` 仍会通过，
+  表现为「装好了但 404」。前端 `install.sh` 会就此事给出告警。
 
 ### 验收
 
 契约测试在 **`zg-homework-tests/`**（该目录被 gitignore，是本地联调资产，不入库；干净检出可能没有这些文件）：
 
 ```bash
-cd /Users/zg/PycharmProjects/zg-homework
+cd <仓库根目录>
 python3 -m unittest discover -s zg-homework-tests -p 'test_*.py' -v
 ```
 
