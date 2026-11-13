@@ -101,7 +101,7 @@ https://xxx.com/homework_api/  → 本项目后端
 | `/etc/systemd/system/zg-homework-server.service` | systemd 单元 | 由 `install.sh` 渲染 |
 | `/etc/nginx/conf.d/zg-homework.conf` | 共享 nginx 片段 | 由 web `install.sh` 生成 |
 
-`UPLOAD_DIR` 与 `PRIVATE_HOMEWORK_DIR` 必须**在检出目录之外**且**互不重叠**——这是 `server_run.sh` 的既有强校验，本方案沿用 `/var/lib/zg-homework/` 下的两个子目录天然满足。
+`UPLOAD_DIR` 与 `PRIVATE_HOMEWORK_DIR` 必须**在检出目录的父目录之外**且**互不重叠**——这是 `server_run.sh` 的既有强校验（`ROOT.parent` 规则，比"检出目录之外"更严），本方案沿用 `/var/lib/zg-homework/` 下的两个子目录天然满足。`install.sh` 必须按同一规则校验，否则会产出 `server_run.sh` 拒绝的配置。
 
 ---
 
@@ -144,30 +144,35 @@ sudo zg-homework-server/scripts/install.sh \
 | `--api-port` | `8000` | 后端监听端口（仅 `127.0.0.1`） |
 | `--service-user` / `--service-group` | `www-data` | systemd 运行身份 |
 | `--database-url` | 无（必填） | `mysql+pymysql://…?charset=utf8mb4` |
-| `--jwt-secret` | 无 | 不给则用 `openssl rand -hex 32` 生成并打印一次 |
+| `--jwt-secret` | 无 | 不给则用 `openssl rand -hex 32` 生成（无 `openssl` 时回退 `secrets.token_hex(32)`）；**密钥不打印到终端** |
 | `--cors-origins` | 无（可选） | 同域反代下通常留空；给了则注入 `CORS_ORIGINS` |
-| `--data-dir` | `/var/lib/zg-homework` | 上传数据根目录 |
-| `--skip-venv` | 关 | 跳过 venv 创建（已有 venv 时用） |
+| `--data-dir` | `/var/lib/zg-homework` | 上传数据根目录；必须在检出目录的**父目录**之外（与 `server_run.sh` 一致） |
+| `--env-file` | `/etc/zg-homework-server/env` | 只接受该默认值——单元的 `EnvironmentFile=` 是硬字面量，改路径会导致单元指向另一份配置 |
+| `--env-owner` | `root:<service-group>` | env 文件属主；非 root 属主会告警 |
+| `--skip-venv` | 关 | 跳过 venv 创建（已有 venv 时自动复用） |
 | `--no-start` | 关 | 装完不 `systemctl enable --now` |
-| `--force-env` | 关 | 覆盖已存在的 `/etc/zg-homework-server/env`（默认保留） |
+| `--force-env` | 关 | 丢弃已存在的 env 并按模板整体重建（默认保留） |
 
 **行为**
 
-1. 校验：`--server-dir` 必须是已存在真实目录（含 `app/main.py`）；`--api-port` 为合法端口；`--database-url` 以 `mysql+pymysql://` 开头；`--data-dir` 必须在 `--server-dir` 之外。
+1. 校验：`--server-dir` 必须是已存在真实目录（含 `app/main.py`）；`--api-port` 为合法端口（规范化为 `str(int(port))`）；`--database-url` 以 `mysql+pymysql://` 开头且以 `charset=utf8mb4` 结尾；`--data-dir` 不得等于或位于 `--server-dir` 的**父目录**之下（与 `server_run.sh` 的校验同规则）；`--env-file` 必须是默认值。**所有校验先于任何文件写入**——失败的运行不得留下半成品。
 2. 渲染 systemd 单元：读 `scripts/zg-homework-server.service.example`，替换占位符 `__SERVER_MODULE_DIR__`、`__SERVER_PYTHON__`（= `<server-dir>/.venv/bin/python`）、`__SERVICE_USER__`、`__SERVICE_GROUP__`、`__SERVER_PORT__`，写入 `/etc/systemd/system/zg-homework-server.service`（`0644`）。
    - 渲染后的 `ExecStart` 必须**逐字**等于 `<python> -m uvicorn app.main:app --host 127.0.0.1 --port <port> --workers 1`，否则 `server_run.sh` 会拒绝控制。
    - `EnvironmentFile` 必须是 `/etc/zg-homework-server/env`（唯一环境文件），`Type=simple`，`KillMode=control-group`，`Environment=` 仅 `PYTHONDONTWRITEBYTECODE=1` 与 `ZG_HOMEWORK_SYSTEMD_PRODUCTION=1`。
+   - 占位符检测只针对**已知占位符名**——合法路径含 `__`（如 `/data/apps/my__app`）不得被判失败。
 3. 生成 `/etc/zg-homework-server/env`（`0640 root:<service-group>`）：
-   - 以 `scripts/production.env.example` 为骨架，替换 `DATABASE_URL`、`JWT_SECRET`、`UPLOAD_DIR`、`PRIVATE_HOMEWORK_DIR`、`CORS_ORIGINS`、`ENV=prod`、`DEBUG=false`。
-   - **值不得包含 `'"\$` 与控制字符**——`server_run.sh` 的配置校验会直接拒绝；占位符未替换时同样拒绝。
-   - 保留 `production.env.example` 中 `ENV/DEBUG/DB_ECHO/JWT_ALGORITHM/JWT_EXPIRE_DAYS/ADMIN_INIT_PASSWORD/MAX_UPLOAD_MB/ALLOWED_EXTENSIONS/ARTICLE_*` 等其余键。
-   - **已存在 env 时的语义**：默认**不覆盖**整个文件，只更新本次显式指定的键；`JWT_SECRET` 若已存在且未显式传 `--jwt-secret`，保留原值（避免每次部署轮换密钥导致已签发 token 全部失效）；传 `--force-env` 才整体重写。
+   - **已有文件是基底**：以已存在的 env 的键值为基础，只覆盖本次确定的键——`DATABASE_URL` 总是覆盖；`JWT_SECRET` / `CORS_ORIGINS` 仅在显式传参时覆盖（未传则保留原值，避免轮换密钥导致已签发 token 失效、避免清空运维手填的 `CORS_ORIGINS`）；`UPLOAD_DIR` / `PRIVATE_HOMEWORK_DIR` 总是按 `--data-dir` 写入；其余键保留原值，模板默认值只填补文件中缺失的键；**运维手工添加的键必须保留**。
+   - 若原值仍是 `__REPLACE_ME__` 占位符，必须替换（`JWT_SECRET` 换成新生成的密钥，`CORS_ORIGINS` 换成空串）——绝不让占位符漏进产物。
+   - **值不得包含 `'"\$`、控制字符与首尾空白**——`server_run.sh` 的配置校验会直接拒绝这三类；`__…__` 模式对 `DATABASE_URL`/`JWT_SECRET`/`UPLOAD_DIR`/`PRIVATE_HOMEWORK_DIR`/`CORS_ORIGINS` 五个键同样拒绝。
+   - 落地时先以 `0600` 创建再 `chmod 0640`，避免密钥短暂 world-readable。
+   - `production.env.example` 提供其余键的默认值（`ENV=prod`、`DEBUG=false`、`DB_ECHO`、`JWT_ALGORITHM`、`JWT_EXPIRE_DAYS`、`ADMIN_INIT_PASSWORD`、`MAX_UPLOAD_MB`、`ALLOWED_EXTENSIONS`、`ARTICLE_*` 等）。
+   - 传 `--force-env` 才丢弃已有文件整体重建。
 4. 建数据目录 `<data-dir>/uploads`、`<data-dir>/private_homework`，属主 `<service-user>:<service-group>`，`0750`。
-5. 建 venv：复用 `scripts/init_check.sh`（它拒绝覆盖已存在的 `.venv`）。
+5. 建 venv：`.venv` 不存在时复用 `scripts/init_check.sh` 创建；**已存在则复用并打印提示**，不报错（`init_check.sh` 拒绝覆盖已有 venv）。
 6. `systemctl daemon-reload`；除非 `--no-start`，`systemctl enable --now zg-homework-server`。
-7. 打印部署摘要（端口、路径、unit 名）与后续步骤（数据库初始化见 §6）。
+7. 打印部署摘要（**端口**、路径、unit 名）与后续步骤（数据库初始化见 §6）。端口非 8000 时额外提示：`server_run.sh` 需带 `SERVER_PORT=<port>` 运行，否则会拒绝刚安装的单元。
 
-**幂等**：重复执行不报错、不覆盖已存在的 `env` 中的 `JWT_SECRET`（已存在则保留，除非显式传 `--jwt-secret`）、可重复 `daemon-reload`。
+**幂等**：重复执行不报错——已有 `.venv` 复用、已有 env 的键值保留、已存在的数据目录不重建、可重复 `daemon-reload`。
 
 **不含数据库初始化**（本次范围外）。
 
@@ -413,8 +418,9 @@ ls /var/lib/zg-homework-web/current/index.html
   - env 文件权限 `0640`、属主 `root:<service-group>`；值不含 `'"\$`；无未替换占位符；
   - 数据目录已建且在 `--server-dir` 之外；
   - nginx 片段只含两个 `location`、**不含** `server {` 块；`proxy_pass` 不带末尾 `/`；`alias` 带末尾 `/`；
-  - 非法参数（端口越界、`--database-url` 非 `mysql+pymysql://`、`--data-dir` 落在 `--server-dir` 内、缺 `--database-url`）一律非零退出且不写文件；
-  - 幂等：二次执行不报错、`JWT_SECRET` 不被覆盖；
+  - 非法参数（端口越界或非规范形态、`--database-url` 非 `mysql+pymysql://`、`--data-dir` 落在检出目录的父目录之下、`--env-file` 非默认值、缺 `--database-url`）一律非零退出且不写文件；
+  - 幂等：二次执行不报错、`JWT_SECRET` 不被覆盖、运维手填的键（如 `ADMIN_INIT_PASSWORD`）不被清空、已有 `.venv` 被复用而非报错；
+  - 值校验：含首尾空白 / 引号 / 反斜杠 / 未替换占位符的输入被拒绝；
   - 产物中不含明文凭据回显到 stdout（`--jwt-secret` 传入的值不出现在输出里）。
 
 ### 9.2 `zg-homework-tests/test_web_deploy.py`
