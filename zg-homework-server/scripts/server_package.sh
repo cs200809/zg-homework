@@ -16,9 +16,6 @@ FILES = ('requirements.txt', '.env.example', 'Dockerfile', '.dockerignore',
          'README.md', 'scripts/server_run.sh', 'scripts/server_package.sh', 'scripts/install.sh',
          'scripts/init_check.sh', 'scripts/production.env.example',
          'scripts/zg-homework-server.service.example')
-# The installer belongs to the deployment chain but a source tree may ship
-# without it; such a tree is still packageable and the omission is reported.
-OPTIONAL = ('scripts/install.sh',)
 SERVER = True
 
 # Translate argparse's standard labels and common argument errors without changing parsing.
@@ -119,9 +116,6 @@ def main():
         # The fixed scripts directory must not redirect outside the module.
         if '/' in name and not stat.S_ISDIR((root / 'scripts').lstat().st_mode):
             raise ValueError('scripts 必须是真实目录')
-        if name in OPTIONAL and not (path.exists() or path.is_symlink()):
-            print('警告：源码树缺少 ' + name + '，归档中不包含该文件。', file=sys.stderr)
-            continue
         entries.append((path, Path(name), require_regular(path)))
 
     fd, temporary = tempfile.mkstemp(prefix='.package-', suffix='.tmp', dir=parent)
