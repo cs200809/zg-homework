@@ -31,6 +31,10 @@ ALLOWED_KEYS = frozenset((
     'ARTICLE_ALLOWED_EXTENSIONS', 'ARTICLE_MAX_UPLOAD_MB', 'REGISTER_RATE_LIMIT',
     'ACTION_RATE_LIMIT',
 ))
+# server_run.sh 用同一个正则与同一句中文拒绝非法路径；这里必须逐字一致，
+# 否则 install.sh 会渲染出 server_run.sh 永远管不了的单元。
+SAFE_PATH = re.compile(r'/[A-Za-z0-9_./-]+')
+PATH_RULE = 'Python 和检出目录路径必须为绝对路径，且只能包含 ASCII 字母、数字、_、-、. 和 /'
 
 
 def fail(message):
@@ -77,6 +81,7 @@ class ChineseParser(argparse.ArgumentParser):
 
 parser = ChineseParser(
     description='安装 zg-homework 服务端：渲染 systemd 单元、生成生产配置、建立数据目录。',
+    epilog='环境变量：INIT_PYTHON=python3.12 可指定创建虚拟环境所用的解释器（默认 python3，要求 3.12+）。',
     add_help=False)
 parser.add_argument('--server-dir', default='/data/apps/zg-homework-server', help='服务端代码检出目录')
 parser.add_argument('--api-port', default='8000', help='后端监听端口（仅 127.0.0.1）')
@@ -115,6 +120,21 @@ def set_owner(path, uid, gid):
         fail(f'无法设置 {path} 的属主：{exc.strerror or exc}；请以 root 运行')
 
 
+def allowed_keys():
+    """读取 server_run.sh 允许的键集合；读不到时退回本文件内置的同一份副本。"""
+    controller = Path(__file__).resolve().parent / 'server_run.sh'
+    try:
+        text = controller.read_text(encoding='utf-8')
+    except OSError:
+        return set(ALLOWED_KEYS)
+    match = re.search(r'APP_KEYS = frozenset\(\((.*?)\)\)', text, re.S)
+    if not match:
+        return set(ALLOWED_KEYS)
+    keys = {item.strip().strip('\'"')
+            for item in match.group(1).replace('\n', '').split(',') if item.strip()}
+    return keys or set(ALLOWED_KEYS)
+
+
 def check_value(key, value, source=None):
     """按 server_run.sh 的配置契约校验一个值。"""
     where = f'（{source}）' if source else ''
@@ -144,8 +164,15 @@ def write_file(path, text, mode):
     """先以受限权限创建文件再放宽权限，避免秘密短暂可读。"""
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        with os.fdopen(os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600),
-                       'w', encoding='utf-8') as stream:
+        fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            # os.open 的 mode 只在创建时生效；已存在的文件可能仍是 0644，
+            # 必须在写入内容之前先用 fchmod 收紧权限。
+            os.fchmod(fd, 0o600)
+        except OSError:
+            os.close(fd)
+            raise
+        with os.fdopen(fd, 'w', encoding='utf-8') as stream:
             stream.write(text)
         os.chmod(path, mode)
     except OSError as exc:
@@ -288,6 +315,12 @@ def main():
         print(f'警告：--unit-file 不是 {DEFAULT_UNIT_FILE}；单元名仍固定为 {UNIT_NAME}，'
               '请确认目标路径在 systemd 的单元目录内', file=sys.stderr)
     server_dir = Path(args.server_dir).resolve()
+    # server_run.sh 用同一条规则拒绝非法路径：这里必须先挡住，
+    # 否则渲染出的 ExecStart 会被 systemd 按空白拆开，且 server_run.sh 永远不管这个单元。
+    python = str(server_dir / '.venv' / 'bin' / 'python')
+    for label, value in (('--server-dir', str(server_dir)), ('虚拟环境解释器', python)):
+        if not SAFE_PATH.fullmatch(value):
+            fail(f'{label} 不被 server_run.sh 接受：{value}；{PATH_RULE}')
     if not (server_dir / 'app' / 'main.py').is_file():
         fail(f'--server-dir 必须包含 app/main.py：{server_dir}')
     data_dir = Path(args.data_dir).resolve()

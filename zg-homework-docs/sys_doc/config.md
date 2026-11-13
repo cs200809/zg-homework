@@ -8,9 +8,9 @@
 ```
 ### prod
 ``` 
-    url: jdbc:mysql://182.254.241.215:3306/homework_points?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
-    username: root
-    password: Hp@12345678
+    url: jdbc:mysql://127.0.0.1:3306/homework_points?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
+    username: homework_user
+    password: GaGaHp@12345678
 ```
 ## admin 账号
 
