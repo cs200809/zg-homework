@@ -311,20 +311,39 @@ def package(root, args):
     output = destination / ('zg-homework-' + datetime.now().strftime('%Y%m%d-%H%M%S') + '.tar.gz')
     with tempfile.TemporaryDirectory(prefix='zg-package-') as temp:
         stage = Path(temp)
-        for name, script, extra in (('zg-homework-server', 'server_package.sh', []),
-                                    ('zg-homework-web', 'web_package.sh', ['--source'])):
-            module_archive = stage / (name + '.tar.gz')
-            subprocess.run(['sh', str(root / name / 'scripts' / script), *extra,
-                            '--output', str(module_archive)], check=True)
-            with tarfile.open(module_archive, 'r:gz') as archive:
-                for member in archive.getmembers():
-                    parts = Path(member.name).parts
-                    if not parts or parts[0] != name or '..' in parts or not (member.isfile() or member.isdir()):
-                        fail('模块源码包包含不安全的路径或文件')
-                archive.extractall(stage, filter='data')
+        for name, tree, files in (
+            ('zg-homework-server', 'app', ('requirements.txt', 'README.md', 'Dockerfile', '.dockerignore', '.env.example')),
+            ('zg-homework-web', 'src', ('index.html', 'package.json', 'package-lock.json', 'tsconfig.json',
+                                        'vite.config.ts', 'Dockerfile', 'nginx.conf', 'README.md')),
+        ):
+            source = root / name
+            target = stage / name
+            target.mkdir()
+            def ignore(directory, names):
+                ignored = []
+                for entry in names:
+                    path = Path(directory) / entry
+                    if path.is_symlink():
+                        fail('源码包含符号链接，无法打包')
+                    if entry.startswith('.') or entry in ('__pycache__', 'uploads', 'private_homework', 'tests') or entry.endswith(('.pyc', '.pyo')):
+                        ignored.append(entry)
+                    elif not path.is_file() and not path.is_dir():
+                        fail('源码包含特殊文件，无法打包')
+                return ignored
+            if (source / tree).is_symlink():
+                fail('源码包含符号链接，无法打包')
+            shutil.copytree(source / tree, target / tree, ignore=ignore)
+            for filename in files:
+                path = source / filename
+                if path.is_symlink() or not path.is_file():
+                    fail(f'源码文件不存在或不安全：{path}')
+                shutil.copy2(path, target / filename)
+            (target / 'scripts').mkdir()
         backend = stage / 'zg-homework-server'
-        safe_values = {key: value for key, value in values.items() if key not in ('DATABASE_URL', 'JWT_SECRET')}
-        (backend / '.env').write_text(dotenv(safe_values), encoding='utf-8')
+        package_values = values if mode == 'prod' else {
+            key: value for key, value in values.items() if key not in ('DATABASE_URL', 'JWT_SECRET')
+        }
+        (backend / '.env').write_text(dotenv(package_values), encoding='utf-8')
         (backend / '.env').chmod(0o600)
         (backend / '.deploy-port').write_text(server['project.port'] + '\n')
         (stage / 'zg-homework-web/.env.production').write_text(dotenv({'VITE_API_BASE_URL': api}), encoding='utf-8')
@@ -344,7 +363,8 @@ def package(root, args):
             os.link(temporary, output)
         finally:
             os.unlink(temporary)
-    print(f'打包成功：{output}（数据库连接和 JWT 密钥须在目标机单独提供）')
+    notice = '包含数据库凭据和 JWT 密钥，请妥善保管' if mode == 'prod' else '数据库连接和 JWT 密钥须在目标机单独提供'
+    print(f'打包成功：{output}（{notice}）')
 
 
 def packaged(root, deploy):
@@ -358,10 +378,12 @@ def packaged(root, deploy):
             raise ValueError()
     except (ValueError, TypeError):
         fail('服务端 .env 配置格式错误')
-    missing = [key for key in ('DATABASE_URL', 'JWT_SECRET') if not os.environ.get(key)]
+    for key in ('DATABASE_URL', 'JWT_SECRET'):
+        if key not in values:
+            values[key] = os.environ.get(key, '')
+    missing = [key for key in ('DATABASE_URL', 'JWT_SECRET') if not values[key]]
     if missing:
         fail('缺少配置项：' + ', '.join(missing))
-    values.update({key: os.environ[key] for key in ('DATABASE_URL', 'JWT_SECRET')})
     port_file = root / '.deploy-port'
     if not port_file.is_file() or not port_file.read_text().strip():
         fail('缺少配置项：服务端端口')
@@ -371,6 +393,22 @@ def packaged(root, deploy):
     positive(values['MAX_UPLOAD_MB'], 'MAX_UPLOAD_MB')
     if not values['DATABASE_URL'].startswith('mysql+pymysql://') or values['JWT_ALGORITHM'] not in ('HS256', 'HS384', 'HS512'):
         fail('数据库地址或 JWT 算法配置无效')
+    if not deploy:
+        venv = root / '.venv'
+        python_path = venv / 'bin/python'
+        if not venv.exists():
+            interpreter = shutil.which('python3.12')
+            if not interpreter:
+                fail('缺少 Python 3.12，请先安装 Python 3.12 及 venv 支持')
+            print('正在创建服务端虚拟环境...', flush=True)
+            subprocess.run([interpreter, '-m', 'venv', str(venv)], check=True)
+        if not python_path.is_file() or not (venv / 'pyvenv.cfg').is_file():
+            fail(f'服务端虚拟环境不可用：{venv}，请检查后手动处理')
+        subprocess.run([str(python_path), '-c',
+                        'import sys; sys.exit(0 if sys.version_info >= (3, 12) else "需要 Python 3.12 或更高版本")'], check=True)
+        print('正在安装服务端依赖...', flush=True)
+        subprocess.run([str(python_path), '-m', 'pip', 'install', '-r',
+                        str(root / 'requirements.txt')], check=True)
     python = check_server(root, values)
     print('服务端环境与配置检查通过', flush=True)
     if deploy:
