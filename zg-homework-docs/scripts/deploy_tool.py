@@ -176,10 +176,19 @@ def launch(command, root, env, port, health, log, pidfile=None):
         try:
             request = Request(f'http://127.0.0.1:{port}{health}', method='POST' if health else 'GET')
             with urlopen(request, timeout=1) as response:
-                if response.status == 200:
+                ready = response.status == 200
+                if ready and health:
+                    try:
+                        body = json.load(response)
+                        ready = body.get('code') == 0 and body.get('data', {}).get('status') == 'ok'
+                    except (ValueError, AttributeError):
+                        ready = False
+                if ready:
                     if pidfile:
                         identity = process_identity(proc.pid)
                         if not identity or proc.poll() is not None:
+                            if proc.poll() is None:
+                                os.killpg(proc.pid, signal.SIGTERM)
                             fail('无法确认启动进程的身份')
                         try:
                             pidfile.write_text(json.dumps({'pid': proc.pid, 'port': port, 'identity': identity}))
@@ -189,10 +198,14 @@ def launch(command, root, env, port, health, log, pidfile=None):
                             raise
                     print(f'部署成功，状态：运行中，端口：{port}，PID：{proc.pid}，日志：{log}')
                     return
+                time.sleep(0.5)
         except OSError:
             time.sleep(0.5)
-    proc.terminate()
-    proc.wait(timeout=5)
+    os.killpg(proc.pid, signal.SIGTERM)
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        fail(f'服务未就绪且进程未退出，请查看日志：{log}')
     fail(f'服务未就绪，请查看日志：{log}')
 
 
@@ -222,6 +235,7 @@ def local_server(root, pidfile):
     env.update(values)
     launch([python, '-m', 'uvicorn', 'app.main:app', '--host', '127.0.0.1', '--port', config['project.port']],
            module, env, config['project.port'], '/homework_api/health', root / '.dev-logs/server.log', pidfile)
+    print('健康检查不代表数据库可用或已初始化。')
 
 
 def local_web(root, pidfile):
@@ -243,6 +257,9 @@ def local_web(root, pidfile):
 
 
 def local_control(root, kind, args):
+    if args == ['--help']:
+        print('用法：deploy_local.sh {start|stop|status|restart}；默认 start')
+        return
     if len(args) > 1 or (args and args[0] not in ('start', 'stop', 'statu', 'status', 'restart')):
         fail('用法：deploy_local.sh {start|stop|statu|status|restart}')
     operation = args[0] if args else 'start'
@@ -261,12 +278,17 @@ def local_control(root, kind, args):
             stop_local(pidfile)
         else:
             if operation == 'restart':
+                if kind == 'server':
+                    config = properties(root / 'zg-homework-docs/config-dev/server-build.config', SERVER_KEYS)
+                    server_config(config, 'dev')
+                else:
+                    config = properties(root / 'zg-homework-docs/config-dev/web-build.config', WEB_KEYS)
+                    web_config(config)
                 stop_local(pidfile)
             else:
                 data = managed_process(pidfile)
                 if data:
-                    print(f"状态：运行中，端口：{data['port']}，PID：{data['pid']}")
-                    return
+                    fail(f"服务已运行于端口 {data['port']}，请使用 restart 部署当前代码")
             (local_server if kind == 'server' else local_web)(root, pidfile)
 
 
@@ -279,20 +301,30 @@ def package(root, args):
     web = properties(directory / 'web-build.config', WEB_KEYS)
     values = server_config(server, mode)
     api = web_config(web)
+    if mode == 'prod':
+        if not Path(server['private.homework.dir']).is_absolute():
+            fail('生产配置项 private.homework.dir 必须为持久化绝对路径')
+        if 'xxx.com' in web['server.domain'].lower():
+            fail('生产配置项 server.domain 不能使用占位域名')
     destination = root / 'zg-homework-tests/tar'
     destination.mkdir(parents=True, exist_ok=True)
     output = destination / ('zg-homework-' + datetime.now().strftime('%Y%m%d-%H%M%S') + '.tar.gz')
-    excluded = shutil.ignore_patterns('.git', '.env', '.env.*.local', 'node_modules', 'dist', 'build',
-                                      '__pycache__', '*.pyc', '.venv', 'tests', 'offline_tests',
-                                      'uploads', 'private_homework', 'logs', '.DS_Store', '*.tsbuildinfo')
     with tempfile.TemporaryDirectory(prefix='zg-package-') as temp:
         stage = Path(temp)
-        for name in ('zg-homework-server', 'zg-homework-web'):
-            shutil.copytree(root / name, stage / name, ignore=excluded, symlinks=True)
-            if any(path.is_symlink() for path in (stage / name).rglob('*')):
-                fail('源码包含符号链接，无法打包')
+        for name, script, extra in (('zg-homework-server', 'server_package.sh', []),
+                                    ('zg-homework-web', 'web_package.sh', ['--source'])):
+            module_archive = stage / (name + '.tar.gz')
+            subprocess.run(['sh', str(root / name / 'scripts' / script), *extra,
+                            '--output', str(module_archive)], check=True)
+            with tarfile.open(module_archive, 'r:gz') as archive:
+                for member in archive.getmembers():
+                    parts = Path(member.name).parts
+                    if not parts or parts[0] != name or '..' in parts or not (member.isfile() or member.isdir()):
+                        fail('模块源码包包含不安全的路径或文件')
+                archive.extractall(stage, filter='data')
         backend = stage / 'zg-homework-server'
-        (backend / '.env').write_text(dotenv(values), encoding='utf-8')
+        safe_values = {key: value for key, value in values.items() if key not in ('DATABASE_URL', 'JWT_SECRET')}
+        (backend / '.env').write_text(dotenv(safe_values), encoding='utf-8')
         (backend / '.env').chmod(0o600)
         (backend / '.deploy-port').write_text(server['project.port'] + '\n')
         (stage / 'zg-homework-web/.env.production').write_text(dotenv({'VITE_API_BASE_URL': api}), encoding='utf-8')
@@ -301,17 +333,23 @@ def package(root, args):
             script = backend / name
             script.write_text('#!/bin/sh\nset -eu\nROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)\nexec python3 "$ROOT/scripts/deploy_tool.py" ' + action + ' "$ROOT"\n')
             script.chmod(0o755)
-        with output.open('xb') as raw:
-            os.chmod(output, 0o600)
-            with tarfile.open(fileobj=raw, mode='w:gz') as archive:
-                for name in ('zg-homework-server', 'zg-homework-web'):
-                    archive.add(stage / name, arcname=name)
-    print(f'打包成功：{output}（包含数据库和密钥配置，请妥善保管）')
+        fd, temporary = tempfile.mkstemp(prefix='.zg-package-', dir=destination)
+        try:
+            with os.fdopen(fd, 'wb') as raw:
+                with tarfile.open(fileobj=raw, mode='w:gz') as archive:
+                    for name in ('zg-homework-server', 'zg-homework-web'):
+                        archive.add(stage / name, arcname=name)
+                raw.flush()
+                os.fsync(raw.fileno())
+            os.link(temporary, output)
+        finally:
+            os.unlink(temporary)
+    print(f'打包成功：{output}（数据库连接和 JWT 密钥须在目标机单独提供）')
 
 
 def packaged(root, deploy):
     envfile = root / '.env'
-    required = ('APP_NAME', 'ENV', 'DATABASE_URL', 'JWT_SECRET', 'JWT_ALGORITHM', 'JWT_EXPIRE_DAYS',
+    required = ('APP_NAME', 'ENV', 'JWT_ALGORITHM', 'JWT_EXPIRE_DAYS',
                 'CORS_ORIGINS', 'PRIVATE_HOMEWORK_DIR', 'MAX_UPLOAD_MB', 'ALLOWED_EXTENSIONS')
     raw = properties(envfile, required)
     try:
@@ -320,6 +358,10 @@ def packaged(root, deploy):
             raise ValueError()
     except (ValueError, TypeError):
         fail('服务端 .env 配置格式错误')
+    missing = [key for key in ('DATABASE_URL', 'JWT_SECRET') if not os.environ.get(key)]
+    if missing:
+        fail('缺少配置项：' + ', '.join(missing))
+    values.update({key: os.environ[key] for key in ('DATABASE_URL', 'JWT_SECRET')})
     port_file = root / '.deploy-port'
     if not port_file.is_file() or not port_file.read_text().strip():
         fail('缺少配置项：服务端端口')
@@ -336,6 +378,7 @@ def packaged(root, deploy):
         env.update(values)
         launch([python, '-m', 'uvicorn', 'app.main:app', '--host', '127.0.0.1', '--port', port],
                root, env, port, '/homework_api/health', root / 'logs/server.log')
+        print('健康检查不代表数据库可用或已初始化。')
 
 
 if __name__ == '__main__':

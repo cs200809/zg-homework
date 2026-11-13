@@ -4,7 +4,7 @@
 ```
     url: jdbc:mysql://localhost:3306/zg_homework?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
     username: root
-    password: 12345678 PROD: Hp@12345678
+    password: GaGa@12345678
 ```
 ### prod
 ``` 
