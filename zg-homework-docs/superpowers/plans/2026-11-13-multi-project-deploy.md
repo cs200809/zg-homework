@@ -751,8 +751,8 @@ Expected: FAIL —— `WebInstallTests` 全部失败（`zg-homework-web/scripts/
 set -eu
 
 ROOT_PREFIX=/
-WEB_PREFIX=/homework
-API_PREFIX=/homework_api
+WEB_PREFIX=/homework/
+API_PREFIX=/homework_api/
 API_UPSTREAM=127.0.0.1:8000
 DEPLOY_DIR=/var/lib/zg-homework-web
 SNIPPET_FILE=/etc/nginx/conf.d/zg-homework.conf

@@ -312,17 +312,22 @@ cd zg-homework-server
                                               sudo sh ./scripts/server_run.sh check
 
 cd zg-homework-web
-./scripts/web_package.sh
+./scripts/web_package.sh --source
+  → zg-homework-tests/tar/zg-homework-web-source-<ts>.tar.gz
+   （含 src/ 与 scripts/：install.sh、web_deploy.sh）
+                                    scp  ──▶  解压后 sudo ./scripts/install.sh --api-upstream 127.0.0.1:8000
+
+./scripts/web_package.sh            # 默认：静态包（只有 index.html + assets）
   → zg-homework-tests/tar/zg-homework-web-static-<ts>.tar.gz
-   （base=/homework/，API 前缀=/homework_api）
-                                    scp  ──▶  sudo ./scripts/install.sh --api-upstream 127.0.0.1:8000
-                                              ./scripts/web_deploy.sh --package <上传的包>
+   （base=/homework/，API 前缀=/homework_api；不含任何脚本）
+                                    scp  ──▶  ./scripts/web_deploy.sh --package <上传的静态包>
 ```
 
 要点：
 - 两个打包脚本的产物**均不含凭据**：服务端包排除 `.env` 与 admin 密码哈希；前端静态包只含构建产物。
-- 服务端包内的 `scripts/install.sh` 与仓库内同一份脚本——打包脚本的白名单需要相应补上 `scripts/install.sh`（见 §10 第 1 步）。
-- 前端包内不需要 `install.sh`（安装只需在生产机做一次），但为便于「解包即装」，web 包**不**强行带上脚本，保持产物最小。
+- 服务端包内的 `scripts/install.sh` 与仓库内同一份脚本——打包脚本的白名单已补上它（见 §10 第 1 步）。
+- **前端有两种包，用途不同**：`web_package.sh --source` 产出**源码包**（含 `src/` 与 `scripts/`，即 `install.sh` + `web_deploy.sh`），用于把部署脚本带到生产机；`web_package.sh`（默认）产出**静态包**（只含 `index.html` + `assets/`），用于发布前端产物。生产机上「用源码包里的脚本去发布静态包」是标准链路。
+- 静态包不含任何脚本，因此**它本身无法自举**——发布动作依赖源码包（或机器上已有的 `web_deploy.sh`）。
 
 
 ---
@@ -449,7 +454,7 @@ ls /var/lib/zg-homework-web/current/index.html
 
 ## 10. 实施顺序
 
-1. 修 `production.env.example` 的两处模板缺陷（§5）；把 `scripts/install.sh` 加入 `server_package.sh` 的 `FILES` 白名单（§4.6）。
+1. 修 `production.env.example` 的两处模板缺陷（§5）；把 `scripts/install.sh` 加入 `server_package.sh` 的 `FILES` 白名单，把 `scripts/install.sh` 与 `scripts/web_deploy.sh` 加入 `web_package.sh` 的 `FILES` 白名单（§4.6）。
 2. 写服务端 `install.sh` + 契约测试（`test_install_scripts.py`）。
 3. 写前端 `install.sh` + 契约测试。
 4. 写 `web_deploy.sh`（模式 A + 模式 B）+ 契约测试（`test_web_deploy.py`）。
