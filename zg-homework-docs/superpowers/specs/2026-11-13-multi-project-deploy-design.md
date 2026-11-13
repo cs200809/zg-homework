@@ -267,8 +267,10 @@ location /homework_api/ {
 **共同流程**
 
 1. 前置检查：`<deploy-dir>/releases` 存在（否则提示先跑 web `install.sh`）；模式 B 另需 node 依赖检查。
-2. 版本目录名：`web-<UTC 时间戳>-<内容哈希前 8 位>-<随机后缀>`，同一目录内唯一且可排序（随机后缀避免同一秒内连续两次发布撞名）。
-3. 校验产物存在 `index.html`；写入归属标记 `.web-run-owner`（内容 = 源码检出目录绝对路径 + `\n`；模式 A 下取包内记录的构建来源，取不到则写 `<unknown>`），与 `web_run.sh` 的标记格式一致，保证两套脚本不会互相误认 `current`。
+2. 版本目录名：`web-<UTC 时间戳>-<种子哈希前 8 位>-<随机后缀>`，同一目录内唯一且可排序（随机后缀避免同一秒内连续两次发布撞名）。种子哈希取自包内容（模式 A）或发布清单（模式 B），**不是**构建产物的逐字节哈希——避免为算哈希全量读盘。
+3. 校验产物存在 `index.html`；写入归属标记 `.web-run-owner`（内容 = 源码检出目录绝对路径 + `\n`；模式 A 下取 `--source-dir`，未给则写 `<unknown>`）。
+   - 该标记**刻意与 `web_run.sh` 互斥**：`web_run.sh` 的 `current_target()` 要求标记等于它自己的检出目录，所以模式 A 发布的版本**不会**被 `web_run.sh` 接管——这正是防止两套脚本互相误认 `current` 的机制。
+   - 因此：**两种部署形态（`web_run.sh` 独占 nginx / `web_deploy.sh` 共享 nginx）不得混用同一个 `--deploy-dir`**。同一目录上先后切换形态时，须先手工清理 `current` 与 `releases/`。
 4. `nginx -t`：失败则**中止**，不切换 `current`、不 reload，删除本次版本目录。
 5. 原子切换：在 `<deploy-dir>` 下建临时符号链接指向新版本目录，`os.replace` 覆盖 `current`（与 `web_run.sh` 的 `publish()` 同一手法）。
 6. `nginx -s reload`（`--no-reload` 时跳过）。
