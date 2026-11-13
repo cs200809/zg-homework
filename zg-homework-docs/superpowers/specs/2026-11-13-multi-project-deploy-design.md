@@ -269,8 +269,9 @@ location /homework_api/ {
 1. 前置检查：`<deploy-dir>/releases` 存在（否则提示先跑 web `install.sh`）；模式 B 另需 node 依赖检查。
 2. 版本目录名：`web-<UTC 时间戳>-<种子哈希前 8 位>-<随机后缀>`，同一目录内唯一且可排序（随机后缀避免同一秒内连续两次发布撞名）。种子哈希取自包内容（模式 A）或发布清单（模式 B），**不是**构建产物的逐字节哈希——避免为算哈希全量读盘。
 3. 校验产物存在 `index.html`；写入归属标记 `.web-run-owner`（内容 = 源码检出目录绝对路径 + `\n`；模式 A 下取 `--source-dir`，未给则写 `<unknown>`）。
-   - 该标记**刻意与 `web_run.sh` 互斥**：`web_run.sh` 的 `current_target()` 要求标记等于它自己的检出目录，所以模式 A 发布的版本**不会**被 `web_run.sh` 接管——这正是防止两套脚本互相误认 `current` 的机制。
-   - 因此：**两种部署形态（`web_run.sh` 独占 nginx / `web_deploy.sh` 共享 nginx）不得混用同一个 `--deploy-dir`**。同一目录上先后切换形态时，须先手工清理 `current` 与 `releases/`。
+   - 该标记的作用是**让两套脚本能区分彼此的 `current`**：`web_run.sh` 的 `current_target()` 要求标记等于它自己的检出目录，因此标记值不同即互斥——`web_run.sh` 会拒绝接管 `web_deploy.sh` 发布的版本。
+   - **例外（务必在文档中写明）**：标记值**相同**时并不互斥——模式 B 的缺省 `--source-dir` 就是模块目录（与 `web_run.sh` 的 `ROOT` 相同），模式 A 若显式指向同一检出目录亦然；此时 `web_run.sh` 会把该版本当成自己的。
+   - 结论不变：**两种部署形态（`web_run.sh` 独占 nginx / `web_deploy.sh` 共享 nginx）不应混用同一个 `--deploy-dir`**。两者**默认值相同**（都是 `/var/lib/zg-homework-web`），所以冲突是默认可达的——`web_run.sh` 的使用者必须把 `WEB_DEPLOY_DIR` 指向别处。混用同一目录时须先手工清理 `current` 与 `releases/`。
 4. `nginx -t`：失败则**中止**，不切换 `current`、不 reload，删除本次版本目录。
 5. 原子切换：在 `<deploy-dir>` 下建临时符号链接指向新版本目录，`os.replace` 覆盖 `current`（与 `web_run.sh` 的 `publish()` 同一手法）。
 6. `nginx -s reload`（`--no-reload` 时跳过）。
