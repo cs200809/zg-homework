@@ -117,7 +117,7 @@ https://xxx.com/homework_api/  → 本项目后端
 | `zg-homework-server/scripts/server_run.sh` | 不变 | systemd 单元的 check/status/start/stop/restart | 不写文件 |
 | `zg-homework-server/scripts/server_package.sh` | 仅改白名单 | 服务端源码归档；白名单增加 `scripts/install.sh` | — |
 | `zg-homework-server/scripts/init_check.sh` | 不变 | 创建 `.venv` | — |
-| `zg-homework-web/scripts/web_package.sh` | 不变 | 前端静态包 / 源码包 | — |
+| `zg-homework-web/scripts/web_package.sh` | 仅改白名单 | 前端静态包 / 源码包；白名单增加 `scripts/install.sh` | — |
 | `zg-homework-web/scripts/web_run.sh` | 不变 | 独占 nginx 模式（保留，本方案不使用） | — |
 
 **既有契约测试 `zg-homework-tests/test_run_scripts.py`、`test_production_contract.py`、`test_package_scripts.py` 零改动。**
@@ -182,8 +182,8 @@ sudo zg-homework-server/scripts/install.sh \
 
 ```bash
 sudo zg-homework-web/scripts/install.sh \
-  --web-prefix /homework \
-  --api-prefix /homework_api \
+  --web-prefix /homework/ \
+  --api-prefix /homework_api/ \
   --api-upstream 127.0.0.1:8000 \
   --deploy-dir /var/lib/zg-homework-web
 ```
@@ -192,11 +192,15 @@ sudo zg-homework-web/scripts/install.sh \
 
 | 参数 | 默认 | 说明 |
 |---|---|---|
-| `--web-prefix` | `/homework` | 前端路径前缀（须以 `/` 开头并以 `/` 结尾） |
-| `--api-prefix` | `/homework_api` | 后端路径前缀（须以 `/` 开头并以 `/` 结尾） |
+| `--web-prefix` | `/homework/` | 前端路径前缀（须以 `/` 开头**并以 `/` 结尾**） |
+| `--api-prefix` | `/homework_api/` | 后端路径前缀（须以 `/` 开头**并以 `/` 结尾**） |
 | `--api-upstream` | `127.0.0.1:8000` | 后端上游，必须是 `127.0.0.1:PORT` |
-| `--deploy-dir` | `/var/lib/zg-homework-web` | 前端产物根目录 |
+| `--deploy-dir` | `/var/lib/zg-homework-web` | 前端产物根目录；**只接受该默认值**（与 `--snippet-file` 同样锁定，见下） |
 | `--no-reload` | 关 | 生成片段后不 reload nginx |
+| `--snippet-file` | `/etc/nginx/conf.d/zg-homework.conf` | **只接受该默认值**——共享 nginx 的主配置与 `sites-available/`、`sites-enabled/` 由运维维护，本项目脚本一律不得写入 |
+| `--nginx-bin` | `nginx` | nginx 可执行文件；找不到时报「找不到 nginx 可执行文件」而非「配置校验失败」，且**不删除**已写片段 |
+| `--nginx-main-conf` | `/etc/nginx/nginx.conf` | 主配置路径（仅用于 `nginx -t` 与 include 检查） |
+| `--root` | `/` | 根前缀，仅用于沙箱测试；必须是绝对路径且非空 |
 | `--print-only` | 关 | 只打印片段内容到 stdout，不写文件（供人工核对） |
 
 **行为**
