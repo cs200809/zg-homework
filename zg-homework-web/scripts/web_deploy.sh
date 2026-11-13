@@ -7,9 +7,12 @@
 --build 在服务器本机构建。流程固定为：产出版本目录 → nginx -t → 原子切换 current → reload；
 任何一步失败都不留下半成品，reload 失败会把 current 指回上一版本。
 
+整个发布过程持发布目录的独占锁（与 web_run.sh 同一把锁），并发发布会被拒绝。
+
 本脚本只写自己的发布目录（默认 /var/lib/zg-homework-web），不写 /etc/nginx/ 下的任何文件。
 """
 import argparse
+import fcntl
 import hashlib
 import os
 from pathlib import Path
@@ -35,6 +38,9 @@ MARKER = '.web-run-owner'
 UNKNOWN_OWNER = '<unknown>'
 # 静态包唯一顶层目录名（web_package.sh 的静态包形态）。
 STATIC_TOP = 'zg-homework-web-static'
+# 解包上限：防止解压炸弹（web_package.sh 的真实产物远低于这些上限）。
+MAX_MEMBERS = 20000
+MAX_EXTRACT_BYTES = 512 * 1024 * 1024
 
 
 def fail(message):
@@ -90,6 +96,12 @@ def safe_extract(archive, destination):
     members = archive.getmembers()
     if not members:
         fail('静态包为空')
+    if len(members) > MAX_MEMBERS:
+        fail('静态包的条目过多（%d 条，上限 %d 条）' % (len(members), MAX_MEMBERS))
+    total = sum(member.size for member in members if member.isfile())
+    if total > MAX_EXTRACT_BYTES:
+        fail('静态包解压后的体积超过上限（%d MiB，上限 %d MiB）'
+             % (total // (1024 * 1024), MAX_EXTRACT_BYTES // (1024 * 1024)))
     for member in members:
         name = member.name
         if not name:
@@ -213,6 +225,43 @@ def publish(base, target):
         shutil.rmtree(temporary, ignore_errors=True)
 
 
+def acquire_lock(base):
+    """独占锁住发布目录：与 web_run.sh 同样的做法，避免两次发布交错。"""
+    fd = os.open(str(base), os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        os.close(fd)
+        fail('发布目录已被锁定（另一个发布或服务控制操作正在进行）：%s；请稍后重试' % base)
+    return fd
+
+
+def release_lock(fd):
+    if fd is None:
+        return
+    try:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+    except OSError:
+        pass
+    try:
+        os.close(fd)
+    except OSError:
+        pass
+
+
+def managed_release(target, releases):
+    """目标是否是受管理的发布版本：必须直接位于 releases/ 之下。
+
+    与 web_run.sh 的 current_target() 同一约束：手工造的 current → /etc 之类的
+    符号链接不是受管理版本，绝不能被当作回滚目标写回去。
+    """
+    try:
+        parent = target.parent.resolve()
+    except OSError:
+        return False
+    return parent == releases.resolve() and target.is_dir()
+
+
 def reload_nginx(nginx_bin):
     if shutil.which('systemctl'):
         return run(['systemctl', 'reload', 'nginx']).returncode == 0
@@ -220,6 +269,7 @@ def reload_nginx(nginx_bin):
 
 
 # Translate argparse's standard labels and common argument errors without changing parsing.
+# 这张表与同一模块下的 web_package.sh 逐字重复（两处都要同步维护）。
 _argparse_messages = {
     'usage: ': '用法：',
     'options': '选项',
@@ -229,6 +279,7 @@ _argparse_messages = {
     'unrecognized arguments: %s': '无法识别的参数：%s',
     'expected one argument': '需要一个参数',
     'argument %(argument_name)s: %(message)s': '参数 %(argument_name)s：%(message)s',
+    'not allowed with argument %s': '不能与参数 %s 同时使用',
 }
 _original_argparse_gettext = argparse._
 argparse._ = lambda message: _argparse_messages.get(message, _original_argparse_gettext(message))
@@ -243,7 +294,8 @@ group.add_argument('--build', action='store_true', help='在服务器本机构�
 parser.add_argument('--deploy-dir', default=DEFAULTS['deploy_dir'],
                     help='前端产物根目录（固定 %s）' % ALLOWED_DEPLOY_DIR)
 parser.add_argument('--source-dir', default=None,
-                    help='源码检出目录（--build 使用，默认脚本所在模块目录）')
+                    help='源码检出目录（--build 用它构建；--package 用它记录归属来源，'
+                         '缺省时归属记为 <unknown>）')
 parser.add_argument('--nginx-bin', default=DEFAULTS['nginx_bin'], help='nginx 可执行文件（默认 nginx）')
 parser.add_argument('--nginx-main-conf', default=DEFAULTS['nginx_main_conf'],
                     help='nginx 主配置路径（默认 /etc/nginx/nginx.conf）')
@@ -281,15 +333,26 @@ def main():
     if not nginx_available(args.nginx_bin):
         fail('找不到 nginx 可执行文件（%s）；请用 --nginx-bin 指定 nginx 的绝对路径，'
              '或先安装 nginx 后重试；未写入任何文件' % args.nginx_bin)
+    # 整个发布过程持独占锁：并发发布会交错 reload 与历史版本清单。
+    lock = acquire_lock(base)
+    try:
+        publish_locked(base, releases, current)
+    finally:
+        release_lock(lock)
+
+
+def publish_locked(base, releases, current):
+    source = Path(args.source_dir).resolve() if args.source_dir else None
     if args.build:
-        source = Path(args.source_dir).resolve() if args.source_dir else Path(__file__).resolve().parent.parent
+        source = source or Path(__file__).resolve().parent.parent
         if not source.is_dir():
             fail('源码检出目录不存在：%s' % source)
         release = release_from_build(source, releases)
         owner = str(source)
     else:
         release = release_from_package(args.package, releases)
-        owner = UNKNOWN_OWNER
+        # 模式 A：源码目录已知就记录来源（保留真实归属），未知才写 <unknown>。
+        owner = str(source) if source is not None else UNKNOWN_OWNER
     (release / MARKER).write_text(owner + '\n', encoding='utf-8')
     # 必须先 nginx -t 通过才允许切换；失败只删本次版本目录，不动 current。
     test = run([args.nginx_bin, '-t', '-c', resolve_path(args.root, args.nginx_main_conf)],
@@ -299,17 +362,26 @@ def main():
         detail = (test.stderr or test.stdout or '').strip().splitlines()
         fail('nginx 配置校验失败，未切换版本' + ('：' + detail[-1] if detail else ''))
     previous = None
+    unmanaged = None
     if current.is_symlink():
         target = current.resolve()
-        if target.is_dir():
+        if managed_release(target, releases):
             previous = target
+        else:
+            # 手工造的符号链接不是受管理版本，不能作为回滚目标写回去。
+            unmanaged = target
     publish(base, release)
     if not args.no_reload:
         if not reload_nginx(args.nginx_bin):
             if previous is not None:
                 publish(base, previous)
-                reload_nginx(args.nginx_bin)
-                fail('nginx reload 失败，已恢复上一版本：%s' % previous)
+                if reload_nginx(args.nginx_bin):
+                    fail('nginx reload 失败，已恢复上一版本：%s' % previous)
+                fail('符号链接已恢复，但回滚 reload 同样失败；current 已指回 %s，'
+                     '但 nginx 可能仍在服务新版本，请人工检查' % previous)
+            if unmanaged is not None:
+                fail('nginx reload 失败；原 current 指向 %s，不是受管理的发布目录，'
+                     '不作为回滚目标；current 仍指向新版本，请人工检查' % unmanaged)
             fail('nginx reload 失败；不存在上一版本可恢复，current 仍指向新版本，请人工检查')
     print('已发布：%s' % release)
     print('current → %s' % release)
