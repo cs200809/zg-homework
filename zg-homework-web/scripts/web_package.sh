@@ -15,7 +15,7 @@ MODULE = 'zg-homework-web'
 TREE = 'src'
 FILES = ('index.html', 'package.json', 'package-lock.json', 'tsconfig.json',
          'vite.config.ts', 'Dockerfile', 'nginx.conf', 'README.md',
-         'scripts/web_run.sh', 'scripts/web_package.sh')
+         'scripts/web_run.sh', 'scripts/web_package.sh', 'scripts/install.sh')
 SERVER = False
 
 # Translate argparse's standard labels and common argument errors without changing parsing.

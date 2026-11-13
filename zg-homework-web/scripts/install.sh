@@ -17,21 +17,27 @@ NGINX_MAIN_CONF=/etc/nginx/nginx.conf
 NO_RELOAD=0
 PRINT_ONLY=0
 
+# 允许写入的路径是写死的：共享 nginx 的主配置、sites-available/、sites-enabled/
+# 由运维统一维护，本项目只允许写自己的 conf.d 片段与自己的发布目录。
+ALLOWED_SNIPPET_FILE=/etc/nginx/conf.d/zg-homework.conf
+ALLOWED_DEPLOY_DIR=/var/lib/zg-homework-web
+
 usage() {
     printf '%s\n' \
         '用法：sh scripts/install.sh [选项]' \
         '  --web-prefix PREFIX      前端路径前缀（默认 /homework/）' \
         '  --api-prefix PREFIX      后端路径前缀（默认 /homework_api/）' \
         '  --api-upstream HOST:PORT 后端上游（默认 127.0.0.1:8000，仅允许 127.0.0.1）' \
-        '  --deploy-dir DIR         前端产物根目录（默认 /var/lib/zg-homework-web）' \
-        '  --snippet-file PATH      nginx 片段路径（默认 /etc/nginx/conf.d/zg-homework.conf）' \
+        "  --deploy-dir DIR         前端产物根目录（固定 ${ALLOWED_DEPLOY_DIR}）" \
+        "  --snippet-file PATH      nginx 片段路径（固定 ${ALLOWED_SNIPPET_FILE}）" \
         '  --nginx-bin PATH         nginx 可执行文件（默认 nginx）' \
         '  --nginx-main-conf PATH   nginx 主配置路径（默认 /etc/nginx/nginx.conf）' \
-        '  --root PREFIX            根前缀，用于沙箱测试（默认 /）' \
+        '  --root PREFIX            根前缀，用于沙箱测试（默认 /，必须是绝对路径）' \
         '  --no-reload              不 reload nginx' \
         '  --print-only             只打印片段内容，不写任何文件' \
         '  --help                   显示帮助' \
-        '路径前缀必须以 / 开头并以 / 结尾，例如 /homework/。'
+        '路径前缀必须以 / 开头并以 / 结尾，例如 /homework/。' \
+        '片段路径与发布目录是写死的：本项目不写共享 nginx 的主配置与 sites-available/sites-enabled/。'
 }
 
 fail() {
@@ -46,10 +52,16 @@ arg_error() {
 }
 
 require_value() {
-    # $1=选项名 $2=剩余参数个数
+    # $1=选项名 $2=剩余参数个数 $3=取值
     if [ "$2" -lt 2 ]; then
         arg_error "$1 缺少取值"
     fi
+    if [ -z "$3" ]; then
+        arg_error "$1 缺少取值（取值不能为空）"
+    fi
+    case "$3" in
+        --*) arg_error "$1 缺少取值（取值不能以 -- 开头）" ;;
+    esac
 }
 
 validate_prefix() {
@@ -68,6 +80,21 @@ validate_absolute() {
     esac
 }
 
+validate_fixed_path() {
+    # $1=选项名 $2=取值 $3=唯一允许的取值
+    if [ "$2" != "$3" ]; then
+        fail "$1 无效：只能是 ${3}；本项目只写自己的 conf.d 片段与发布目录，不得写共享 nginx 的主配置或 sites-available/sites-enabled（当前值 ${2}）"
+    fi
+}
+
+nginx_available() {
+    # $1=nginx 可执行文件：名字走 PATH，含斜杠的按路径判断是否可执行。
+    case "$1" in
+        */*) [ -x "$1" ] ;;
+        *) command -v "$1" >/dev/null 2>&1 ;;
+    esac
+}
+
 resolve_path() {
     # $1=根前缀 $2=绝对路径
     case "$1" in
@@ -79,14 +106,14 @@ resolve_path() {
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
-        --web-prefix) require_value "$1" "$#"; WEB_PREFIX=$2; shift 2 ;;
-        --api-prefix) require_value "$1" "$#"; API_PREFIX=$2; shift 2 ;;
-        --api-upstream) require_value "$1" "$#"; API_UPSTREAM=$2; shift 2 ;;
-        --deploy-dir) require_value "$1" "$#"; DEPLOY_DIR=$2; shift 2 ;;
-        --snippet-file) require_value "$1" "$#"; SNIPPET_FILE=$2; shift 2 ;;
-        --nginx-bin) require_value "$1" "$#"; NGINX_BIN=$2; shift 2 ;;
-        --nginx-main-conf) require_value "$1" "$#"; NGINX_MAIN_CONF=$2; shift 2 ;;
-        --root) require_value "$1" "$#"; ROOT_PREFIX=$2; shift 2 ;;
+        --web-prefix) require_value "$1" "$#" "${2-}"; WEB_PREFIX=$2; shift 2 ;;
+        --api-prefix) require_value "$1" "$#" "${2-}"; API_PREFIX=$2; shift 2 ;;
+        --api-upstream) require_value "$1" "$#" "${2-}"; API_UPSTREAM=$2; shift 2 ;;
+        --deploy-dir) require_value "$1" "$#" "${2-}"; DEPLOY_DIR=$2; shift 2 ;;
+        --snippet-file) require_value "$1" "$#" "${2-}"; SNIPPET_FILE=$2; shift 2 ;;
+        --nginx-bin) require_value "$1" "$#" "${2-}"; NGINX_BIN=$2; shift 2 ;;
+        --nginx-main-conf) require_value "$1" "$#" "${2-}"; NGINX_MAIN_CONF=$2; shift 2 ;;
+        --root) require_value "$1" "$#" "${2-}"; ROOT_PREFIX=$2; shift 2 ;;
         --no-reload) NO_RELOAD=1; shift ;;
         --print-only) PRINT_ONLY=1; shift ;;
         --help|-h) usage; exit 0 ;;
@@ -97,9 +124,11 @@ done
 # --- 校验：全部先于任何文件写入，失败时不得留下半成品 ---
 validate_prefix '--web-prefix' "$WEB_PREFIX"
 validate_prefix '--api-prefix' "$API_PREFIX"
-validate_absolute '--deploy-dir' "$DEPLOY_DIR"
-validate_absolute '--snippet-file' "$SNIPPET_FILE"
 validate_absolute '--nginx-main-conf' "$NGINX_MAIN_CONF"
+validate_absolute '--root' "$ROOT_PREFIX"
+# 写死的两条路径约束：共享 nginx 的主配置与 sites-* 目录不在允许范围内。
+validate_fixed_path '--snippet-file' "$SNIPPET_FILE" "$ALLOWED_SNIPPET_FILE"
+validate_fixed_path '--deploy-dir' "$DEPLOY_DIR" "$ALLOWED_DEPLOY_DIR"
 
 case "$API_UPSTREAM" in
     127.0.0.1:*)
@@ -118,6 +147,13 @@ case "$API_UPSTREAM" in
     *) fail "--api-upstream 无效：上游必须是 127.0.0.1:PORT（当前值 ${API_UPSTREAM}）" ;;
 esac
 API_UPSTREAM="127.0.0.1:$PORT"
+
+# nginx 可执行文件必须先存在：否则无法校验配置，
+# 而校验失败分支会删掉刚写入的片段——那会把“环境缺件”误报成“配置非法”。
+# --print-only 不写任何文件，因此不受此项约束。
+if [ "$PRINT_ONLY" -eq 0 ] && ! nginx_available "$NGINX_BIN"; then
+    fail "找不到 nginx 可执行文件（${NGINX_BIN}）；请用 --nginx-bin 指定 nginx 的绝对路径，或先安装 nginx 后重试；未写入任何文件"
+fi
 
 TARGET_SNIPPET=$(resolve_path "$ROOT_PREFIX" "$SNIPPET_FILE")
 TARGET_MAIN_CONF=$(resolve_path "$ROOT_PREFIX" "$NGINX_MAIN_CONF")
