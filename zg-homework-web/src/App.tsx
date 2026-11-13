@@ -13,7 +13,7 @@ export default function App() {
   }, [init])
 
   return (
-    <BrowserRouter>
+    <BrowserRouter basename={import.meta.env.BASE_URL}>
       <AppRouter />
     </BrowserRouter>
   )

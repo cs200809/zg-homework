@@ -6,6 +6,7 @@ from datetime import datetime
 import os
 from pathlib import Path
 import stat
+import subprocess
 import sys
 import tarfile
 import tempfile
@@ -30,9 +31,10 @@ _argparse_messages = {
 }
 _original_argparse_gettext = argparse._
 argparse._ = lambda message: _argparse_messages.get(message, _original_argparse_gettext(message))
-parser = argparse.ArgumentParser(description='将当前工作树打包为部署源码归档。'
-    '分发前请检查源码和示例文件中是否包含敏感信息。'
+parser = argparse.ArgumentParser(description='默认构建并打包 /homework/ 静态部署文件；使用 --source 打包源码。'
+    '构建产物可能包含配置和源码中的敏感信息，分发前请检查。'
     '无法保证并发修改源码时生成的快照一致。')
+parser.add_argument('--source', action='store_true', help='打包源码，而不是构建静态部署包')
 parser.add_argument('-o', '--output', help='两个模块目录之外的新 .tar.gz 文件路径（默认：zg-homework-tests/tar）')
 args = parser.parse_args(sys.argv[2:])
 root = Path(os.path.abspath(sys.argv[1])).resolve().parent.parent
@@ -64,7 +66,7 @@ def require_regular(path):
         raise ValueError('不是普通文件（禁止使用符号链接）：' + str(path))
     return st
 
-def collect_tree(path, relative, entries):
+def collect_tree(path, relative, entries, static=False):
     before = path.lstat()
     if not stat.S_ISDIR(before.st_mode):
         raise ValueError('不是目录（禁止使用符号链接）：' + str(path))
@@ -74,12 +76,15 @@ def collect_tree(path, relative, entries):
     for child in children:
         st = child.stat(follow_symlinks=False)
         is_dir = stat.S_ISDIR(st.st_mode)
-        if excluded(child.name, is_dir):
+        if static:
+            if child.name.startswith('.') or child.name.lower().endswith('.map'):
+                raise ValueError('构建产物包含禁止的文件：' + str(path / child.name))
+        elif excluded(child.name, is_dir):
             continue
         child_path = path / child.name
         child_rel = relative / child.name
         if is_dir:
-            collect_tree(child_path, child_rel, entries)
+            collect_tree(child_path, child_rel, entries, static)
         elif stat.S_ISREG(st.st_mode):
             if not SERVER or child.name.endswith('.py'):
                 entries.append((child_path, child_rel, st))
@@ -95,7 +100,8 @@ def main():
         directory = root.parent / 'zg-homework-tests' / 'tar'
         directory.mkdir(parents=True, exist_ok=True)
         timestamp = datetime.now().strftime('%Y%m%d-%H%M%S-%f')
-        output = directory / f'{MODULE}-{timestamp}.tar.gz'
+        kind = 'source' if args.source else 'static'
+        output = directory / f'{MODULE}-{kind}-{timestamp}.tar.gz'
     if output.name in ('', '.', '..') or not output.name.endswith('.tar.gz'):
         raise ValueError('输出必须指定新的 .tar.gz 文件')
     parent = output.parent.resolve(strict=True)
@@ -108,15 +114,48 @@ def main():
     if os.path.lexists(output):
         raise FileExistsError('输出文件已存在：' + str(output))
 
-    entries = []
-    collect_tree(root / TREE, Path(TREE), entries)
-    for name in FILES:
-        path = root / name
-        # The fixed scripts directory must not redirect outside the module.
-        if '/' in name and not stat.S_ISDIR((root / 'scripts').lstat().st_mode):
-            raise ValueError('scripts 必须是真实目录')
-        entries.append((path, Path(name), require_regular(path)))
+    if args.source:
+        entries = []
+        collect_tree(root / TREE, Path(TREE), entries)
+        for name in FILES:
+            path = root / name
+            # The fixed scripts directory must not redirect outside the module.
+            if '/' in name and not stat.S_ISDIR((root / 'scripts').lstat().st_mode):
+                raise ValueError('scripts 必须是真实目录')
+            entries.append((path, Path(name), require_regular(path)))
+        publish(entries, MODULE, parent, output)
+    else:
+        build_and_publish(parent, output)
+    print('已创建：', output)
+    print('警告：请检查文件中是否包含敏感信息；并发修改时无法保证快照一致。', file=sys.stderr)
 
+def build_and_publish(parent, output):
+    version = subprocess.run(['node', '--version'], capture_output=True, text=True, check=True).stdout.strip()
+    import re
+    match = re.fullmatch(r'v(\d+)\.\d+\.\d+(?:[-+].*)?', version)
+    if not match or int(match.group(1)) < 20:
+        raise ValueError('需要 Node.js 20 或更高版本')
+    tsc = root / 'node_modules/.bin/tsc'
+    vite = root / 'node_modules/.bin/vite'
+    for executable in (tsc, vite):
+        if not os.access(executable, os.X_OK):
+            raise ValueError('请先安装 Web 依赖：' + str(executable))
+    docs = root.parent / 'docs'
+    if not docs.is_dir():
+        raise ValueError('缺少构建临时目录：' + str(docs))
+    with tempfile.TemporaryDirectory(prefix='web-package-', dir=docs) as tmp:
+        destination = Path(tmp) / 'dist'
+        env = os.environ.copy()
+        env['VITE_API_BASE_URL'] = '/homework_api'
+        subprocess.run([str(tsc), '--noEmit', '--incremental', 'false'], cwd=root, env=env, check=True)
+        subprocess.run([str(vite), 'build', '--mode', 'production', '--base', '/homework/',
+                        '--outDir', str(destination), '--emptyOutDir'], cwd=root, env=env, check=True)
+        require_regular(destination / 'index.html')
+        entries = []
+        collect_tree(destination, Path('.'), entries, static=True)
+        publish(entries, MODULE + '-static', parent, output)
+
+def publish(entries, prefix, parent, output):
     fd, temporary = tempfile.mkstemp(prefix='.package-', suffix='.tmp', dir=parent)
     try:
         with os.fdopen(fd, 'wb') as raw:
@@ -124,7 +163,7 @@ def main():
                 for path, relative, original in entries:
                     if signature(path.lstat()) != signature(original):
                         raise ValueError('打包时输入发生变化：' + str(path))
-                    info = tarfile.TarInfo(MODULE + '/' + relative.as_posix())
+                    info = tarfile.TarInfo(prefix + '/' + relative.as_posix())
                     info.mode = stat.S_IMODE(original.st_mode) & 0o777
                     info.mtime = int(original.st_mtime)
                     if stat.S_ISDIR(original.st_mode):
@@ -146,12 +185,10 @@ def main():
         os.link(temporary, output)
     finally:
         os.unlink(temporary)
-    print('已创建：', output)
-    print('警告：请检查文件中是否包含敏感信息；并发修改时无法保证快照一致。', file=sys.stderr)
 
 try:
     main()
-except (OSError, ValueError, tarfile.TarError) as exc:
+except (OSError, ValueError, tarfile.TarError, subprocess.CalledProcessError) as exc:
     print('打包失败：', exc, file=sys.stderr)
     sys.exit(1)
 PY

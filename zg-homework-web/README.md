@@ -26,18 +26,46 @@ npm run dev
 
 开发环境走 Vite 代理（`/homework_api` → `VITE_PROXY_TARGET`，默认 `http://127.0.0.1:8000`，保留路径前缀），避免跨域。
 
-## 源码部署包
+## 部署包
 
 ```bash
-./scripts/web_package.sh  # 默认输出到 ../zg-homework-tests/tar/
+./scripts/web_package.sh          # 默认构建静态包，输出到 ../zg-homework-tests/tar/
+./scripts/web_package.sh --source # 源码包
 ./scripts/web_package.sh -o /已有目录/zg-homework-web.tar.gz
 ```
 
-打包需要 Python 3。输出路径须位于模块目录之外，且目标文件不能已存在。归档读取脚本所在模块当前工作树，包括未提交源码；不会拉取代码或切换分支。按仓库约定，生产打包应在经验证的 `main` 检出执行，打包期间不要修改源码。
+静态包顶层为 `zg-homework-web-static/`，解压后将该目录的内容发布至 `/var/www/zg-homework-web/`，供 Nginx 在 `/homework/` 子路径提供服务。静态构建需要 Node 20+、npm 和已安装的依赖；打包还需要 Python 3。输出路径须位于模块目录之外，且目标文件不能已存在。归档读取脚本所在模块当前工作树，包括未提交源码；不会拉取代码或切换分支。按仓库约定，生产打包应在经验证的 `main` 检出执行，打包期间不要修改源码。
 
-归档包含 `src/` 源码及资源、构建配置、依赖清单及锁文件、Nginx/Docker 配置、README 和运行及打包脚本；不包含测试、临时文件、依赖目录、构建产物或 `.env` 文件。部署时须自行审核运行环境；Vite 客户端变量会进入浏览器代码，不能存放密钥。解压到新目录后用 Node 20+ 安装依赖，按需另行准备配置并由运维配置独立 systemd/Nginx。
+**构建期安全警告：** 构建会执行项目及依赖中的代码，只能在可信、隔离的构建环境中运行；检查本地环境变量和 Vite 配置，`VITE_` 客户端变量会被写入浏览器代码，不能存放密钥。分发前检查产物是否含敏感信息。
 
-**注意：** 打包仅收集文件，不验证或修复运行脚本。当前运行脚本仍存在生产安全问题，且尚未完成 Linux/systemd 实机验证；完成修复和隔离验证后才可生产部署。
+`--source` 源码包包含 `src/` 源码及资源、构建配置、依赖清单及锁文件、Nginx/Docker 配置、README 和运行及打包脚本；不包含测试、临时文件、依赖目录、构建产物或 `.env` 文件。解压到新目录后用 Node 20+ 安装依赖，按需另行准备配置并由运维配置独立 systemd/Nginx。
+
+**注意：** 源码打包仅收集文件，不验证或修复运行脚本。当前运行脚本仍存在生产安全问题，且尚未完成 Linux/systemd 实机验证；完成修复和隔离验证后才可生产部署。
+
+静态包的 Nginx 配置示例（放入已有的 `server` 中，按实际服务端地址调整）：
+
+```nginx
+location = /homework { return 301 /homework/; }
+location ^~ /homework/assets/ {
+    alias /var/www/zg-homework-web/assets/;
+    try_files $uri =404;
+}
+location /homework/ {
+    alias /var/www/zg-homework-web/;
+    index index.html;
+    try_files $uri $uri/ /homework/index.html;
+}
+location /homework_api/ {
+    proxy_pass http://127.0.0.1:8000;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    client_max_body_size 12m;
+}
+```
+
+缺失的 assets 返回 404，不回退到 SPA 页面；`proxy_pass` 不带末尾斜线，保留 `/homework_api/` 前缀。TLS、域名、目录权限与后端服务由运维另行配置。
 
 ## 构建与 Docker 打包
 
